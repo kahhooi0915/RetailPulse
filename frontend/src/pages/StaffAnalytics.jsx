@@ -1,0 +1,618 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  ShoppingCart,
+  BarChart3,
+  User,
+  LogOut,
+  HelpCircle,
+  Bell,
+  Settings,
+  Package,
+  TrendingUp,
+  Users,
+  Trophy,
+  Boxes,
+} from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
+import { motion } from "framer-motion";
+
+const API_BASE = "http://localhost:5000";
+
+export default function StaffAnalytics() {
+  const navigate = useNavigate();
+
+  const [user, setUser] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [inventory, setInventory] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [saleDetails, setSaleDetails] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+
+  useEffect(() => {
+    const savedUser =
+      JSON.parse(localStorage.getItem("user")) ||
+      JSON.parse(sessionStorage.getItem("user"));
+
+    if (!savedUser) {
+      navigate("/");
+      return;
+    }
+
+    setUser(savedUser);
+    fetchAnalyticsData(savedUser);
+  }, [navigate]);
+
+  const fetchAnalyticsData = async (savedUser) => {
+    try {
+      setLoading(true);
+
+      const [productRes, inventoryRes, salesRes, detailRes, userRes] =
+        await Promise.all([
+          fetch(`${API_BASE}/admin/products`),
+          fetch(`${API_BASE}/admin/inventory`),
+          fetch(`${API_BASE}/admin/sales`),
+          fetch(`${API_BASE}/admin/sale-details`),
+          fetch(`${API_BASE}/admin/users`),
+        ]);
+
+      setProducts(await productRes.json());
+      setInventory(await inventoryRes.json());
+      setSales(await salesRes.json());
+      setSaleDetails(await detailRes.json());
+      setUsers(await userRes.json());
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load analytics data.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const branchInventory = useMemo(() => {
+    return inventory.filter(
+      (item) => Number(item.branch_id) === Number(user?.branch_id)
+    );
+  }, [inventory, user]);
+
+  const branchSales = useMemo(() => {
+    return sales.filter(
+      (sale) => Number(sale.branch_id) === Number(user?.branch_id)
+    );
+  }, [sales, user]);
+
+  const branchStaff = useMemo(() => {
+    return users.filter(
+      (u) => Number(u.branch_id) === Number(user?.branch_id)
+    );
+  }, [users, user]);
+
+  const stockChartData = useMemo(() => {
+    return branchInventory.map((item) => ({
+      name: item.product_name,
+      stock: Number(item.quantity_in_stock),
+    }));
+  }, [branchInventory]);
+
+  //Low Stock Alert
+  const lowStockItems = useMemo(() => {
+  return branchInventory
+    .map((stock) => {
+      const product = products.find(
+        (p) => Number(p.product_id) === Number(stock.product_id)
+      );
+
+      return {
+        ...stock,
+        reorder_level: product ? Number(product.reorder_level) : 0,
+        status:
+          Number(stock.quantity_in_stock) <=
+          (product ? Number(product.reorder_level) : 0)
+            ? "LOW"
+            : "OK",
+      };
+    })
+    .filter((item) => item.status === "LOW")
+    .sort((a, b) => Number(a.quantity_in_stock) - Number(b.quantity_in_stock));
+}, [branchInventory, products]);
+
+  const salePerformanceData = useMemo(() => {
+    const grouped = {};
+
+    branchSales.forEach((sale) => {
+      const date = sale.sale_date
+        ? new Date(sale.sale_date).toLocaleDateString("en-MY", {
+            month: "short",
+            day: "numeric",
+          })
+        : "Unknown";
+
+      grouped[date] = (grouped[date] || 0) + Number(sale.total_amount || 0);
+    });
+
+    return Object.keys(grouped).map((date) => ({
+      date,
+      sales: grouped[date],
+    }));
+  }, [branchSales]);
+
+  const topProducts = useMemo(() => {
+    const saleIds = branchSales.map((sale) => Number(sale.sale_id));
+    const grouped = {};
+
+    saleDetails
+      .filter((detail) => saleIds.includes(Number(detail.sale_id)))
+      .forEach((detail) => {
+        const id = detail.product_id;
+
+        if (!grouped[id]) {
+          grouped[id] = {
+            product_id: id,
+            product_name: detail.product_name,
+            quantity: 0,
+            revenue: 0,
+          };
+        }
+
+        grouped[id].quantity += Number(detail.quantity || 0);
+        grouped[id].revenue += Number(detail.subtotal || 0);
+      });
+
+    return Object.values(grouped)
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5);
+  }, [saleDetails, branchSales]);
+
+  const totalSales = branchSales.reduce(
+    (sum, sale) => sum + Number(sale.total_amount || 0),
+    0
+  );
+
+  const totalStock = branchInventory.reduce(
+    (sum, item) => sum + Number(item.quantity_in_stock || 0),
+    0
+  );
+
+  const logout = () => {
+    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
+    navigate("/");
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#eef6fb] text-[#6f85a3]">
+        <div className="text-center">
+          <Package size={42} className="mx-auto mb-3" />
+          <p className="font-semibold">Loading Analytics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
+      <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
+        {/* SIDEBAR */}
+        <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
+          <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
+            RetailPulse
+          </div>
+
+          <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
+            <h4 className="font-extrabold text-[#16325b]">
+              {user?.branch_name || "Main Branch"}
+            </h4>
+            <p className="mt-1 text-xs text-[#6f85a3]">
+              Staff ID: {user?.user_id}
+            </p>
+          </div>
+
+          <nav className="space-y-3">
+            <button
+              onClick={() => navigate("/staff")}
+              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+            >
+              <ShoppingCart size={18} />
+              <span>POS Terminal</span>
+            </button>
+
+            <button className="flex w-full items-center gap-4 rounded-2xl bg-white px-4 py-4 font-bold text-[#1e4db7] shadow">
+              <BarChart3 size={18} />
+              <span>Analytics</span>
+            </button>
+
+          </nav>
+
+          <div className="mt-auto space-y-3">
+            <button onClick={() => setShowHelp(true)} className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]">
+              <HelpCircle size={17} />
+              <span>Help Support</span>
+            </button>
+
+          </div>
+        </aside>
+
+        {/* MAIN */}
+        <motion.main
+        initial={{ opacity: 0, x: 30 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.35 }}
+        className="min-w-0 overflow-y-auto px-8 py-6"
+        >
+          <header className="mb-8 flex items-center gap-5">
+            <div>
+              <h1 className="text-3xl font-extrabold text-[#07102f]">
+                Branch Analytics
+              </h1>
+              <p className="mt-1 text-sm text-[#6f85a3]">
+                Sales performance, stock status, branch staff and top products.
+              </p>
+            </div>
+
+            {/*Dropdowns*/ }
+            <div className="relative ml-auto flex items-center gap-3">
+            <button
+                onClick={() => setShowNotifications(true)}
+                className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
+            >
+                <Bell size={18} />
+            </button>
+
+            <button className="grid h-11 w-11 place-items-center rounded-full bg-white shadow">
+                <Settings size={18} />
+            </button>
+
+            <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="grid h-11 w-11 place-items-center rounded-full bg-[#0d2d6c] font-bold text-white shadow"
+            >
+                {user?.name?.charAt(0)?.toUpperCase() || "U"}
+            </button>
+
+            {showUserMenu && (
+                <div className="absolute right-0 top-14 z-50 w-48 rounded-2xl bg-white p-3 shadow-xl">
+                <button
+                    onClick={() => navigate("/user-profile")}
+                    className="w-full rounded-xl px-4 py-3 text-left text-sm font-bold text-[#17325c] hover:bg-[#eef6fb]"
+                >
+                    User Profile
+                </button>
+
+                <button
+                    onClick={logout}
+                    className="w-full rounded-xl px-4 py-3 text-left text-sm font-bold text-red-500 hover:bg-red-50"
+                >
+                    Logout
+                </button>
+                </div>
+            )}
+            </div>
+
+          </header>
+
+          {/* Low Stock Alert */}
+          <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between">
+                <div>
+                <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Low Stock Alert
+                </h2>
+                <p className="mt-1 text-sm text-[#6f85a3]">
+                    Products that have reached or fallen below reorder level.
+                </p>
+                </div>
+
+                <span className="rounded-full bg-red-100 px-4 py-2 text-sm font-bold text-red-600">
+                {lowStockItems.length} item(s)
+                </span>
+            </div>
+
+            {lowStockItems.length === 0 ? (
+                <div className="rounded-xl bg-[#f4fbff] p-5 text-sm font-semibold text-[#6f85a3]">
+                No low stock products at this branch.
+                </div>
+            ) : (
+                <div className="grid grid-cols-3 gap-4">
+                {lowStockItems.map((item) => (
+                    <div
+                    key={`${item.product_id}-${item.branch_id}`}
+                    className="rounded-xl border border-red-100 bg-red-50 p-4"
+                    >
+                    <h3 className="font-extrabold text-[#17325c]">
+                        {item.product_name}
+                    </h3>
+
+                    <p className="mt-1 text-xs text-[#6f85a3]">
+                        SKU: {item.product_code}
+                    </p>
+
+                    <div className="mt-4 flex items-center justify-between">
+                        <span className="text-sm font-bold text-red-600">
+                        Stock: {item.quantity_in_stock}
+                        </span>
+
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-red-600">
+                        Reorder: {item.reorder_level}
+                        </span>
+                    </div>
+                    </div>
+                ))}
+                </div>
+            )}
+            </section>
+
+          {/* SUMMARY CARDS */}
+         <section className="mb-6 grid grid-cols-5 gap-5">
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                  Branch Sales
+                </p>
+                <TrendingUp className="text-orange-600" size={22} />
+              </div>
+              <h2 className="mt-4 text-3xl font-extrabold">
+                RM {totalSales.toFixed(2)}
+              </h2>
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                  Total Stock
+                </p>
+                <Boxes className="text-[#1e4db7]" size={22} />
+              </div>
+              <h2 className="mt-4 text-3xl font-extrabold">{totalStock}</h2>
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                Low Stock
+                </p>
+                <Package className="text-red-500" size={22} />
+            </div>
+            <h2 className="mt-4 text-3xl font-extrabold text-red-500">
+                {lowStockItems.length}
+            </h2>
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                  Staff
+                </p>
+                <Users className="text-[#1e4db7]" size={22} />
+              </div>
+              <h2 className="mt-4 text-3xl font-extrabold">
+                {branchStaff.length}
+              </h2>
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                  Top Seller
+                </p>
+                <Trophy className="text-orange-600" size={22} />
+              </div>
+              <h2 className="mt-4 truncate text-xl font-extrabold">
+                {topProducts[0]?.product_name || "No sales yet"}
+              </h2>
+            </div>
+          </section>
+
+          {/* CHARTS */}
+          <section className="mb-6 grid grid-cols-[1.4fr_1fr] gap-5">
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-extrabold">
+                Branch Sales Performance
+              </h2>
+
+              <div className="h-[310px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={salePerformanceData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="sales" fill="#0c2f73" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[#0c2f73] p-6 text-white shadow-sm">
+              <h2 className="mb-5 text-xl font-extrabold">
+                Top Seller Products
+              </h2>
+
+              <div className="space-y-4">
+                {topProducts.length === 0 ? (
+                  <p className="text-blue-100">No sale details found.</p>
+                ) : (
+                  topProducts.map((item, index) => (
+                    <div
+                      key={item.product_id}
+                      className="rounded-xl bg-white/10 p-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold">
+                            #{index + 1} {item.product_name}
+                          </p>
+                          <p className="mt-1 text-xs text-blue-200">
+                            Sold: {item.quantity} units
+                          </p>
+                        </div>
+
+                        <p className="font-extrabold text-orange-300">
+                          RM {item.revenue.toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* STOCK + STAFF */}
+          <section className="grid grid-cols-[1.3fr_1fr] gap-5">
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-extrabold">Stock Bar Chart</h2>
+
+              <div className="h-[330px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stockChartData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="stock" fill="#9edff5" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-extrabold">
+                Staff at This Branch
+              </h2>
+
+              <div className="space-y-3">
+                {branchStaff.map((staff) => (
+                  <div
+                    key={staff.user_id}
+                    className="flex items-center justify-between rounded-xl bg-[#f4fbff] p-4"
+                  >
+                    <div>
+                      <p className="font-bold">{staff.name}</p>
+                      <p className="text-xs text-[#6f85a3]">{staff.email}</p>
+                    </div>
+
+                    <span className="rounded-full bg-[#dcf0f9] px-3 py-1 text-xs font-bold text-[#1f4e77]">
+                      {staff.role}
+                    </span>
+                  </div>
+                ))}
+
+                {branchStaff.length === 0 && (
+                  <p className="text-sm text-[#6f85a3]">
+                    No staff found for this branch.
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+        </motion.main>
+     
+    </div>
+
+    {showHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+            <div className="w-[420px] rounded-3xl bg-white p-7 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+                <h2 className="text-2xl font-extrabold text-[#07102f]">
+                Help Support
+                </h2>
+
+                <button
+                onClick={() => setShowHelp(false)}
+                className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
+                >
+                ✕
+                </button>
+            </div>
+
+            <div className="space-y-5 text-sm text-[#17325c]">
+                <div>
+                <h3 className="mb-2 font-extrabold">Quick Help</h3>
+                <p>• View branch sales performance</p>
+                <p>• Check low stock products</p>
+                <p>• Review top seller products</p>
+                </div>
+
+                <div className="border-t pt-4">
+                <h3 className="mb-2 font-extrabold">Contact Support</h3>
+                <p>WhatsApp: 017-7032568</p>
+                <p>Email: support@retailpulse.com</p>
+                </div>
+
+                <div className="rounded-2xl bg-[#eef6fb] p-4">
+                <h3 className="mb-1 font-extrabold">System Status</h3>
+                <p className="font-bold text-green-600">● Active</p>
+                </div>
+            </div>
+            </div>
+        </div>
+        )} 
+
+      {showNotifications && (
+        <div className="fixed inset-0 z-50">
+          <div
+            onClick={() => setShowNotifications(false)}
+            className="absolute inset-0 bg-black/20"
+          />
+
+          <div className="absolute right-0 top-0 h-full w-[360px] bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-xl font-extrabold text-[#07102f]">
+                Notifications
+              </h2>
+
+              <button
+                onClick={() => setShowNotifications(false)}
+                className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-red-50 p-4">
+                <p className="font-extrabold text-red-600">
+                  Low Stock Alert
+                </p>
+                <p className="mt-1 text-sm text-[#6f84a1]">
+                  {lowStockItems.length} product(s) are below reorder level.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#eef6fb] p-4">
+                <p className="font-extrabold text-[#17325c]">
+                  Branch Analytics Active
+                </p>
+                <p className="mt-1 text-sm text-[#6f84a1]">
+                  Sales and inventory report loaded successfully.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#eef6fb] p-4">
+                <p className="font-extrabold text-[#17325c]">
+                  Reminder
+                </p>
+                <p className="mt-1 text-sm text-[#6f84a1]">
+                  Review low stock items before closing shift.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
