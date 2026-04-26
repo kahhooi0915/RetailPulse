@@ -13,10 +13,14 @@ import {
   Users,
   Trophy,
   Boxes,
+  CheckCircle,
 } from "lucide-react";
+
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -40,6 +44,31 @@ export default function StaffAnalytics() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  //Settings states
+  const [showSettings, setShowSettings] = useState(false);
+  const [eyeCareMode, setEyeCareMode] = useState(
+    localStorage.getItem("eyeCareMode") === "true"
+  );
+  const [toast, setToast] = useState({ show: false, message: "" });
+  const [chartType, setChartType] = useState(
+    localStorage.getItem("analyticsChartType") || "BAR"
+  );
+
+  const [displayMode, setDisplayMode] = useState(
+    localStorage.getItem("analyticsDisplayMode") || "REVENUE"
+  );
+
+  const [topProductsLimit, setTopProductsLimit] = useState(
+    Number(localStorage.getItem("analyticsTopProductsLimit") || 5)
+  );
+
+  const [showLowStockPanel, setShowLowStockPanel] = useState(
+    localStorage.getItem("analyticsShowLowStockPanel") !== "false"
+  );
+
+  const [showTopProductsPanel, setShowTopProductsPanel] = useState(
+    localStorage.getItem("analyticsShowTopProductsPanel") !== "false"
+  );
 
   useEffect(() => {
     const savedUser =
@@ -134,19 +163,33 @@ export default function StaffAnalytics() {
     branchSales.forEach((sale) => {
       const date = sale.sale_date
         ? new Date(sale.sale_date).toLocaleDateString("en-MY", {
-            month: "short",
-            day: "numeric",
-          })
+          month: "short",
+          day: "numeric",
+        })
         : "Unknown";
 
-      grouped[date] = (grouped[date] || 0) + Number(sale.total_amount || 0);
+      if (!grouped[date]) {
+        grouped[date] = {
+          revenue: 0,
+          quantity: 0,
+        };
+      }
+
+      grouped[date].revenue += Number(sale.total_amount || 0);
+
+      saleDetails
+        .filter((detail) => Number(detail.sale_id) === Number(sale.sale_id))
+        .forEach((detail) => {
+          grouped[date].quantity += Number(detail.quantity || 0);
+        });
     });
 
     return Object.keys(grouped).map((date) => ({
       date,
-      sales: grouped[date],
+      revenue: grouped[date].revenue,
+      quantity: grouped[date].quantity,
     }));
-  }, [branchSales]);
+  }, [branchSales, saleDetails]);
 
   const topProducts = useMemo(() => {
     const saleIds = branchSales.map((sale) => Number(sale.sale_id));
@@ -172,8 +215,8 @@ export default function StaffAnalytics() {
 
     return Object.values(grouped)
       .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 5);
-  }, [saleDetails, branchSales]);
+      .slice(0, topProductsLimit);
+  }, [saleDetails, branchSales, topProductsLimit]);
 
   const totalSales = branchSales.reduce(
     (sum, sale) => sum + Number(sale.total_amount || 0),
@@ -203,7 +246,12 @@ export default function StaffAnalytics() {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
+    <div
+      className={`h-screen w-full overflow-hidden ${eyeCareMode
+          ? "bg-[#f4f1ea] text-[#3b3b3b]"
+          : "bg-[#eef6fb] text-[#17325c]"
+        }`}
+    >
       <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
         {/* SIDEBAR */}
         <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
@@ -271,9 +319,12 @@ export default function StaffAnalytics() {
                 <Bell size={18} />
             </button>
 
-            <button className="grid h-11 w-11 place-items-center rounded-full bg-white shadow">
+              <button
+                onClick={() => setShowSettings(true)}
+                className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
+              >
                 <Settings size={18} />
-            </button>
+              </button>
 
             <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
@@ -303,8 +354,8 @@ export default function StaffAnalytics() {
 
           </header>
 
-          {/* Low Stock Alert */}
-          <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
+          {showLowStockPanel && (
+            <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
             <div className="mb-5 flex items-center justify-between">
                 <div>
                 <h2 className="text-xl font-extrabold text-[#07102f]">
@@ -353,6 +404,7 @@ export default function StaffAnalytics() {
                 </div>
             )}
             </section>
+          )}
 
           {/* SUMMARY CARDS */}
          <section className="mb-6 grid grid-cols-5 gap-5">
@@ -424,18 +476,38 @@ export default function StaffAnalytics() {
 
               <div className="h-[310px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={salePerformanceData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="sales" fill="#0c2f73" radius={[8, 8, 0, 0]} />
-                  </BarChart>
+                  {chartType === "BAR" ? (
+                    <BarChart data={salePerformanceData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar
+                        dataKey={displayMode === "REVENUE" ? "revenue" : "quantity"}
+                        fill="#0c2f73"
+                        radius={[8, 8, 0, 0]}
+                      />
+                    </BarChart>
+                  ) : (
+                    <LineChart data={salePerformanceData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Line
+                        type="monotone"
+                        dataKey={displayMode === "REVENUE" ? "revenue" : "quantity"}
+                        stroke="#0c2f73"
+                        strokeWidth={3}
+                      />
+                    </LineChart>
+                  )}
                 </ResponsiveContainer>
               </div>
             </div>
 
-            <div className="rounded-2xl bg-[#0c2f73] p-6 text-white shadow-sm">
+            {showTopProductsPanel && (
+              <div className="rounded-2xl bg-[#0c2f73] p-6 text-white shadow-sm">
               <h2 className="mb-5 text-xl font-extrabold">
                 Top Seller Products
               </h2>
@@ -468,6 +540,7 @@ export default function StaffAnalytics() {
                 )}
               </div>
             </div>
+            )}
           </section>
 
           {/* STOCK + STAFF */}
@@ -560,6 +633,161 @@ export default function StaffAnalytics() {
             </div>
         </div>
         )} 
+
+      {toast.show && (
+        <div className="fixed top-6 left-1/2 z-[1000] -translate-x-1/2 pointer-events-none">
+          <div className="flex items-center gap-3 bg-green-600 text-white px-6 py-4 rounded-xl shadow-xl">
+            <CheckCircle size={18} />
+            {toast.message}
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="w-[460px] rounded-3xl bg-white p-7 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-2xl font-extrabold text-[#07102f]">
+                Analytics Settings
+              </h2>
+
+              <button
+                onClick={() => setShowSettings(false)}
+                className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-5 text-sm text-[#17325c]">
+              <div>
+                <label className="mb-2 block font-extrabold">Chart Type</label>
+                <select
+                  value={chartType}
+                  onChange={(e) => setChartType(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+                >
+                  <option value="BAR">Bar Chart</option>
+                  <option value="LINE">Line Chart</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block font-extrabold">Display Mode</label>
+                <select
+                  value={displayMode}
+                  onChange={(e) => setDisplayMode(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+                >
+                  <option value="REVENUE">Revenue</option>
+                  <option value="QUANTITY">Quantity Sold</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block font-extrabold">Top Products Limit</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={topProductsLimit}
+                  onChange={(e) => setTopProductsLimit(Number(e.target.value))}
+                  className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-2xl bg-[#eef6fb] p-4">
+                <div>
+                  <p className="font-extrabold">Show Low Stock Alert</p>
+                  <p className="text-xs text-[#6f84a1]">Display low stock panel</p>
+                </div>
+
+                <button
+                  onClick={() => setShowLowStockPanel(!showLowStockPanel)}
+                  className={`relative h-7 w-14 rounded-full transition ${showLowStockPanel ? "bg-green-500" : "bg-gray-300"
+                    }`}
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${showLowStockPanel ? "right-1" : "left-1"
+                      }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between rounded-2xl bg-[#eef6fb] p-4">
+                <div>
+                  <p className="font-extrabold">Show Top Products</p>
+                  <p className="text-xs text-[#6f84a1]">Display top seller panel</p>
+                </div>
+
+                <button
+                  onClick={() => setShowTopProductsPanel(!showTopProductsPanel)}
+                  className={`relative h-7 w-14 rounded-full transition ${showTopProductsPanel ? "bg-green-500" : "bg-gray-300"
+                    }`}
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${showTopProductsPanel ? "right-1" : "left-1"
+                      }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between rounded-2xl bg-[#eef6fb] p-4">
+                <div>
+                  <p className="font-extrabold">Eye Care Mode</p>
+                  <p className="text-xs text-[#6f84a1]">
+                    Reduce eye strain with softer colors
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setEyeCareMode(!eyeCareMode)}
+                  className={`relative h-7 w-14 rounded-full transition ${eyeCareMode ? "bg-green-500" : "bg-gray-300"
+                    }`}
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${eyeCareMode ? "right-1" : "left-1"
+                      }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-7 grid grid-cols-2 gap-4">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="rounded-full border border-[#0c2f73] bg-white py-4 font-extrabold text-[#0c2f73]"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => {
+                  localStorage.setItem("analyticsChartType", chartType);
+                  localStorage.setItem("analyticsDisplayMode", displayMode);
+                  localStorage.setItem("analyticsTopProductsLimit", topProductsLimit);
+                  localStorage.setItem("analyticsShowLowStockPanel", showLowStockPanel);
+                  localStorage.setItem("analyticsShowTopProductsPanel", showTopProductsPanel);
+                  localStorage.setItem("eyeCareMode", eyeCareMode);
+
+                  setShowSettings(false);
+                  setToast({
+                    show: true,
+                    message: "Analytics settings saved successfully",
+                  });
+
+                  setTimeout(() => {
+                    setToast({ show: false, message: "" });
+                  }, 2500);
+                }}
+                className="rounded-full bg-[#0c2f73] py-4 font-extrabold text-white"
+              >
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showNotifications && (
         <div className="fixed inset-0 z-50">

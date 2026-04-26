@@ -15,8 +15,17 @@ import {
   CreditCard,
   ReceiptText,
   Package,
+  X,
+  Banknote,
+  Wallet,
+  ShieldCheck,
+  CheckCircle,
+  Printer,
+  Download,
+  Mail,
 } from "lucide-react";
 import { motion } from "framer-motion";//for page transition animations
+import { downloadPDF } from "../utils/downloadPDF";
 
 const API_BASE = "http://localhost:5000";
 
@@ -38,7 +47,31 @@ export default function Staff() {
   const [showHoldList, setShowHoldList] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("CARD");
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [completedSale, setCompletedSale] = useState(null);
+  const [showEmailPopup, setShowEmailPopup] = useState(false);
+  const [customerEmail, setCustomerEmail] = useState("");
+  //Settings section states
+  const [showSettings, setShowSettings] = useState(false);
+  const [taxRate, setTaxRate] = useState(
+    Number(localStorage.getItem("taxRate") || 0)
+  );
 
+  const [terminalName, setTerminalName] = useState(
+    localStorage.getItem("terminalName") || "POS-01"
+  );
+
+  const [receiptFooter, setReceiptFooter] = useState(
+    localStorage.getItem("receiptFooter") || "Thank you for shopping with us!"
+  );
+
+  const [eyeCareMode, setEyeCareMode] = useState(
+  localStorage.getItem("eyeCareMode") === "true"
+  );
+
+  //Store user information and fetch initial data on component mount
   useEffect(() => {
     const savedUser =
       JSON.parse(localStorage.getItem("user")) ||
@@ -213,7 +246,7 @@ export default function Staff() {
   const discountPercent = Number(discountInput || 0);
   const discountAmount = subtotal * (discountPercent / 100);
   const discountedSubtotal = subtotal - discountAmount;
-  const tax = discountedSubtotal * 0.08;
+  const tax = discountedSubtotal * (taxRate / 100);
   const total = discountedSubtotal + tax;
 
   const logout = () => {
@@ -279,12 +312,80 @@ export default function Staff() {
     };
 
   const completeTransaction = () => {
-    if (cart.length === 0) {
-      alert("Cart is empty.");
-      return;
-    }
+  if (cart.length === 0) {
+    alert("Cart is empty.");
+    return;
+  }
 
-    alert("Next step: connect sale API and auto deduct inventory.");
+    setShowPaymentModal(true);
+  };
+
+  const confirmPayment = async () => {
+    try {
+      const saleRes = await fetch(`${API_BASE}/admin/sales`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: user.user_id,
+          branch_id: user.branch_id,
+          total_amount: total,
+          payment_method: paymentMethod,
+        }),
+      });
+
+      const saleData = await saleRes.json();
+
+      if (!saleRes.ok) {
+        alert(saleData.message || "Failed to create sale.");
+        return;
+      }
+
+      for (const item of cart) {
+        const detailRes = await fetch(`${API_BASE}/admin/sale-details`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sale_id: saleData.sale_id,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            unit_price: item.selling_price,
+          }),
+        });
+
+        const detailData = await detailRes.json();
+
+        if (!detailRes.ok) {
+          alert(detailData.message || "Failed to save sale detail.");
+          return;
+        }
+      }
+
+      setCompletedSale({
+        sale_id: saleData.sale_id,
+        sale_code: saleData.sale_code || `RP-${saleData.sale_id}`,
+        payment_method: paymentMethod,
+        cart,
+        subtotal,
+        discountPercent,
+        discountAmount,
+        tax,
+        total,
+        date: new Date(),
+      });
+
+      setShowPaymentModal(false);
+      setPaymentSuccess(true);
+      setCart([]);
+      setDiscountInput("");
+      fetchPOSData(user);
+    } catch (error) {
+      console.error(error);
+      alert("Payment failed. Check backend connection.");
+    }
   };
 
   if (loading) {
@@ -304,7 +405,11 @@ export default function Staff() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -12 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
-        className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]"
+        className={`h-screen w-full overflow-hidden ${
+                    eyeCareMode
+                      ? "bg-[#f4f1ea] text-[#3b3b3b]"
+                      : "bg-[#eef6fb] text-[#17325c]"
+                  }`}
     >
       <div className="grid h-full grid-cols-[230px_minmax(0,1fr)_330px]">
 
@@ -387,8 +492,11 @@ export default function Staff() {
                 <Bell size={18} />
             </button>
 
-            <button className="grid h-11 w-11 place-items-center rounded-full bg-white shadow">
-                <Settings size={18} />
+            <button
+              onClick={() => setShowSettings(true)}
+              className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
+            >
+              <Settings size={18} />
             </button>
 
             <button
@@ -605,7 +713,7 @@ export default function Staff() {
             </div>
 
             <div className="mb-4 flex justify-between text-sm text-[#6f84a1]">
-              <span>Tax (8%)</span>
+              <span>Tax ({taxRate}%)</span>
               <strong className="text-[#17325c]">RM {tax.toFixed(2)}</strong>
             </div>
 
@@ -647,15 +755,15 @@ export default function Staff() {
       </div>
 
       {toast.show && (
-            <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
-            <div className="bg-red-500 text-white px-6 py-4 rounded-xl shadow-xl animate-slideUp">
-            {toast.message}
+            <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
+            <div className="flex items-center gap-3 bg-green-600 text-white px-6 py-4 rounded-xl shadow-xl animate-slideUp">
+            <CheckCircle size={18} /> {toast.message}
             </div>
         </div>
     )}
 
     {showHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
             <div className="w-[420px] rounded-3xl bg-white p-7 shadow-2xl">
             <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-2xl font-extrabold text-[#07102f]">
@@ -693,7 +801,61 @@ export default function Staff() {
         </div>
         )}
 
-        {showDiscountPad && (
+    {showEmailPopup && (
+      <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
+        <div className="w-[380px] rounded-3xl bg-white p-6 shadow-2xl">
+          
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-xl font-extrabold text-[#07102f]">
+              Send Receipt
+            </h2>
+
+            <button
+              onClick={() => setShowEmailPopup(false)}
+              className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold"
+            >
+              ✕
+            </button>
+          </div>
+
+          <input
+            type="email"
+            placeholder="Enter customer email"
+            value={customerEmail}
+            onChange={(e) => setCustomerEmail(e.target.value)}
+            className="mb-5 w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+          />
+
+          <button
+            onClick={() => {
+              if (!customerEmail) {
+                alert("Please enter email.");
+                return;
+              }
+
+              setShowEmailPopup(false);
+
+              // show success toast instead of alert
+              setToast({
+                show: true,
+                message: `Receipt sent to ${customerEmail}`,
+              });
+
+              setTimeout(() => {
+                setToast({ show: false, message: "" });
+              }, 2500);
+
+              setCustomerEmail("");
+            }}
+            className="w-full rounded-full bg-[#0c2f73] py-4 font-extrabold text-white"
+          >
+            Send Email
+          </button>
+        </div>
+      </div>
+        )}
+
+    {showDiscountPad && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
             <div className="w-[360px] rounded-3xl bg-white p-6 shadow-2xl">
             <div className="mb-5 flex items-center justify-between">
@@ -766,7 +928,7 @@ export default function Staff() {
         </div>
         )}
 
-        {showHoldList && (
+    {showHoldList && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
                 <div className="w-[460px] rounded-3xl bg-white p-6 shadow-2xl">
                 <div className="mb-5 flex items-center justify-between">
@@ -845,7 +1007,7 @@ export default function Staff() {
             </div>
             )}
 
-        {showNotifications && (
+    {showNotifications && (
             <div className="fixed inset-0 z-50">
                 <div
                 onClick={() => setShowNotifications(false)}
@@ -890,8 +1052,412 @@ export default function Staff() {
                 </div>
                 </div>
             </div>
-            )}
+        )}
 
+    {showSettings && (
+      <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
+        <div className="w-[460px] rounded-3xl bg-white p-7 shadow-2xl">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-2xl font-extrabold text-[#07102f]">
+              POS Settings
+            </h2>
+
+            <button
+              onClick={() => setShowSettings(false)}
+              className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="space-y-5 text-sm text-[#17325c]">
+            <div>
+              <label className="mb-2 block font-extrabold">Tax Rate (%)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={taxRate}
+                onChange={(e) => setTaxRate(Number(e.target.value))}
+                className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block font-extrabold">Terminal Name</label>
+              <input
+                type="text"
+                value={terminalName}
+                onChange={(e) => setTerminalName(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block font-extrabold">
+                Receipt Footer Message
+              </label>
+              <input
+                type="text"
+                value={receiptFooter}
+                onChange={(e) => setReceiptFooter(e.target.value)}
+                className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+              />
+            </div>
+
+          <div className="flex items-center justify-between rounded-2xl bg-[#eef6fb] p-4">
+            <div>
+              <p className="font-extrabold">Eye Care Mode</p>
+              <p className="text-xs text-[#6f84a1]">
+                Reduce eye strain with softer colors
+              </p>
+            </div>
+
+            <button
+              onClick={() => setEyeCareMode(!eyeCareMode)}
+              className={`relative h-7 w-14 rounded-full transition ${
+                eyeCareMode ? "bg-green-500" : "bg-gray-300"
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
+                  eyeCareMode ? "right-1" : "left-1"
+                }`}
+              />
+            </button>
+          </div>
+
+              <div className="mt-7 grid grid-cols-2 gap-4">
+            <button
+              onClick={() => setShowSettings(false)}
+              className="rounded-full border border-[#0c2f73] bg-white py-4 font-extrabold text-[#0c2f73]"
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={() => {
+                localStorage.setItem("taxRate", taxRate);
+                localStorage.setItem("terminalName", terminalName);
+                localStorage.setItem("receiptFooter", receiptFooter);
+                localStorage.setItem("eyeCareMode", eyeCareMode);
+
+                setShowSettings(false);
+
+                setToast({
+                  show: true,
+                  message: "Settings saved successfully",
+                });
+
+                setTimeout(() => {
+                  setToast({ show: false, message: "" });
+                }, 2500);
+              }}
+              className="rounded-full bg-[#0c2f73] py-4 font-extrabold text-white"
+            >
+              Save Settings
+            </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+            )}
+    
+    {showPaymentModal && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+      <div className="w-[680px] overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b px-8 py-6">
+          <h2 className="text-2xl font-extrabold text-[#07102f]">
+            Complete Payment
+          </h2>
+
+          <button onClick={() => setShowPaymentModal(false)}>
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="px-8 py-7">
+          <div className="mb-7 rounded-xl bg-[#e4f4fc] p-6">
+            <div className="mb-3 flex justify-between">
+              <span>Total Items</span>
+              <strong>{cart.reduce((sum, item) => sum + item.quantity, 0)}</strong>
+            </div>
+
+            <div className="mb-3 flex justify-between">
+              <span>Subtotal</span>
+              <strong>RM {subtotal.toFixed(2)}</strong>
+            </div>
+
+            <div className="mb-3 flex justify-between">
+              <span>Discount ({discountPercent}%)</span>
+              <strong>- RM {discountAmount.toFixed(2)}</strong>
+            </div>
+
+            <div className="mb-4 flex justify-between">
+              <span>Tax ({taxRate}%)</span>
+              <strong>RM {tax.toFixed(2)}</strong>
+            </div>
+
+            <div className="flex justify-between border-t pt-5">
+              <span className="font-extrabold tracking-widest">GRAND TOTAL</span>
+              <strong className="text-4xl font-extrabold text-[#071b52]">
+                RM {total.toFixed(2)}
+              </strong>
+            </div>
+          </div>
+
+          <h3 className="mb-4 text-sm font-extrabold tracking-widest text-[#333647]">
+            SELECT PAYMENT METHOD
+          </h3>
+
+          <div className="grid grid-cols-3 gap-4">
+            <button
+              onClick={() => setPaymentMethod("CASH")}
+              className={`relative rounded-xl border p-6 font-extrabold ${
+                paymentMethod === "CASH"
+                  ? "bg-[#0c2f73] text-white"
+                  : "bg-white text-[#07102f]"
+              }`}
+            >
+              <Banknote className="mx-auto mb-3" size={32} />
+              Cash
+              {paymentMethod === "CASH" && (
+                <CheckCircle className="absolute right-3 top-3 text-orange-500" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setPaymentMethod("CARD")}
+              className={`relative rounded-xl border p-6 font-extrabold ${
+                paymentMethod === "CARD"
+                  ? "bg-[#0c2f73] text-white"
+                  : "bg-white text-[#07102f]"
+              }`}
+            >
+              <CreditCard className="mx-auto mb-3" size={32} />
+              Card
+              {paymentMethod === "CARD" && (
+                <CheckCircle className="absolute right-3 top-3 text-orange-500" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setPaymentMethod("E_WALLET")}
+              className={`relative rounded-xl border p-6 font-extrabold ${
+                paymentMethod === "E_WALLET"
+                  ? "bg-[#0c2f73] text-white"
+                  : "bg-white text-[#07102f]"
+              }`}
+            >
+              <Wallet className="mx-auto mb-3" size={32} />
+              E-Wallet
+              {paymentMethod === "E_WALLET" && (
+                <CheckCircle className="absolute right-3 top-3 text-orange-500" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-5 bg-[#eef8fd] px-8 py-6">
+          <button
+            onClick={() => setShowPaymentModal(false)}
+            className="rounded-xl py-4 font-extrabold text-[#333647]"
+          >
+            Cancel
+          </button>
+
+          <button
+            onClick={confirmPayment}
+            className="flex items-center justify-center gap-2 rounded-xl bg-[#0c2f73] py-4 font-extrabold text-white shadow-lg"
+          >
+            <ShieldCheck size={20} />
+            Confirm Payment
+          </button>
+        </div>
+      </div>
+    </div>
+      )}
+
+    {paymentSuccess && completedSale && (
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-[#eef6fb] px-8 py-8">
+        <div className="mx-auto max-w-[760px]">
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-extrabold text-[#07102f]">
+                Transaction Complete
+              </h1>
+              <p className="text-sm text-[#4e6077]">
+                Sale ID: #{completedSale.sale_code} •{" "}
+                {user?.branch_name || "Branch"}
+              </p>
+            </div>
+
+            <span className="rounded-md bg-[#dff3fb] px-4 py-2 text-xs font-extrabold tracking-widest text-[#07102f]">
+              CONFIRMED
+            </span>
+          </div>
+
+          {/* RECEIPT PREVIEW */}
+          <div id="receipt-pdf" className="mx-auto bg-white p-10 shadow-xl">
+            <div className="mb-6 text-center">
+              <h2 className="text-2xl font-extrabold text-[#07102f]">
+                RetailPulse
+              </h2>
+              <p className="mt-2 font-bold">{user?.branch_name || "Branch"}</p>
+              <p className="text-sm text-[#4e6077]">RetailPulse POS System</p>
+            </div>
+
+            <div className="mb-7 grid grid-cols-2 gap-4 rounded-2xl bg-[#f3f9fd] p-6 text-sm">
+              <div>
+                <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
+                  DATE & TIME
+                </p>
+                <strong>
+                  {completedSale.date.toLocaleDateString()} |{" "}
+                  {completedSale.date.toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </strong>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
+                  SALE ID
+                </p>
+                <strong>#{completedSale.sale_code}</strong>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
+                  CASHIER
+                </p>
+                <strong>{user?.name || "Staff"}</strong>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
+                  TERMINAL
+                </p>
+                <strong>{terminalName}</strong>
+              </div>
+            </div>
+
+            <div className="mb-5 grid grid-cols-[1fr_80px_120px] text-xs font-extrabold tracking-widest text-[#8b95a1]">
+              <span>ITEM DESCRIPTION</span>
+              <span className="text-center">QTY</span>
+              <span className="text-right">TOTAL</span>
+            </div>
+
+            {completedSale.cart.map((item) => (
+              <div
+                key={item.product_id}
+                className="mb-4 grid grid-cols-[1fr_80px_120px] items-start text-sm"
+              >
+                <div>
+                  <strong>{item.product_name}</strong>
+                  <p className="text-xs text-[#4e6077]">
+                    RM {Number(item.selling_price).toFixed(2)} / unit
+                  </p>
+                </div>
+
+                <span className="text-center font-bold">{item.quantity}</span>
+
+                <strong className="text-right">
+                  RM {(Number(item.selling_price) * item.quantity).toFixed(2)}
+                </strong>
+              </div>
+            ))}
+
+            <div className="my-6 border-t border-dashed"></div>
+
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <strong>RM {completedSale.subtotal.toFixed(2)}</strong>
+              </div>
+
+              <div className="flex justify-between">
+                <span>Discount</span>
+                <strong>- RM {completedSale.discountAmount.toFixed(2)}</strong>
+              </div>
+
+              <div className="flex justify-between">
+                <span>Tax ({taxRate}%)</span>
+                <strong>RM {completedSale.tax.toFixed(2)}</strong>
+              </div>
+
+              <div className="flex justify-between rounded-md bg-[#071b52] px-5 py-4 text-xl font-extrabold text-white">
+                <span>Grand Total</span>
+                <strong>RM {completedSale.total.toFixed(2)}</strong>
+              </div>
+            </div>
+
+            <div className="mt-7 flex items-center justify-between border-b pb-5">
+              <div className="flex items-center gap-3">
+                <CreditCard size={22} />
+                <div>
+                  <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
+                    PAYMENT METHOD
+                  </p>
+                  <strong>{completedSale.payment_method}</strong>
+                </div>
+              </div>
+
+              <span className="rounded bg-gray-200 px-3 py-1 text-xs font-bold">
+                APPROVED
+              </span>
+            </div>
+
+            <p className="mt-7 text-center font-semibold">
+              {receiptFooter}
+            </p>
+          </div>
+
+          <div className="mt-7 grid grid-cols-3 gap-4">
+           <button
+              onClick={() => window.print()}
+              className="flex items-center justify-center gap-2 rounded-full border border-[#0c2f73] bg-[#0c2f73] px-6 py-4 font-extrabold text-white transition-all duration-300 hover:bg-white hover:text-[#0c2f73] hover:shadow-lg"
+            >
+              <Printer size={18} />
+              Print Receipt
+            </button>
+
+            <button
+              onClick={() =>
+                downloadPDF({
+                  elementId: "receipt-pdf",
+                  fileName: `RetailPulse_Receipt_${completedSale.sale_code}.pdf`,
+                })
+              }
+              className="flex items-center justify-center gap-2 rounded-full border border-[#0c2f73] bg-[#0c2f73] px-6 py-4 font-extrabold text-white transition-all duration-300 hover:bg-white hover:text-[#0c2f73]"
+            >
+              <Download size={18} />
+              Download PDF
+            </button>
+
+            <button
+            onClick={() => setShowEmailPopup(true)}
+            className="flex items-center justify-center gap-2 rounded-full border border-[#0c2f73] bg-[#0c2f73] px-6 py-4 font-extrabold text-white transition-all duration-300 hover:bg-white hover:text-[#0c2f73]"
+          >
+            <Mail size={18} />
+            Email Receipt
+          </button>
+          </div>
+
+          <button
+            onClick={() => {
+              setPaymentSuccess(false);
+              setCompletedSale(null);
+            }}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-full border border-orange-700 bg-orange-700 px-6 py-4 font-extrabold text-white transition-all duration-300 hover:bg-white hover:text-orange-700 hover:shadow-lg"
+          >
+            <ShoppingCart size={20} />
+            New Sale
+          </button>
+        </div>
+      </div>
+    )}
     </motion.div>
   );
 }
