@@ -10,6 +10,7 @@ from routes.category_routes import category_bp
 from routes.product_routes import product_bp
 from routes.inventory_routes import inventory_bp
 from routes.sales_routes import sales_bp
+from routes.stock_transfer_routes import stock_transfer_bp
 
 
 def create_app():
@@ -32,6 +33,7 @@ def create_app():
     app.register_blueprint(product_bp)
     app.register_blueprint(inventory_bp)
     app.register_blueprint(sales_bp)
+    app.register_blueprint(stock_transfer_bp)
 
     return app
 
