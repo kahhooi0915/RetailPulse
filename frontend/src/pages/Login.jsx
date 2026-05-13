@@ -30,7 +30,7 @@ export default function Login() {
         } else if (user.role === "BRANCH_STAFF") {
           navigate("/staff");
         } else if (user.role === "INVENTORY_MANAGER") {
-          navigate("/manager");
+          navigate("/manager-dashboard");
         }
       }, 700);
     } catch (err) {

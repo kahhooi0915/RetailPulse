@@ -508,3 +508,154 @@ def delete_transfer_item(transfer_detail_id):
     except Exception as e:
         print("ERROR delete_transfer_item:", e)
         return jsonify({"message": str(e)}), 500
+    
+    # =========================
+# SMART AUTO SUGGEST TRANSFER
+# =========================
+@stock_transfer_bp.route("/manager/stock-transfer/auto-suggest", methods=["POST"])
+def auto_suggest_transfer():
+    try:
+        data = request.get_json()
+
+        product_id = data.get("product_id")
+        to_branch_id = data.get("to_branch_id")
+        requested_by = data.get("requested_by")
+
+        if product_id is None:
+            return jsonify({"message": "Product is required"}), 400
+
+        if to_branch_id is None:
+            return jsonify({"message": "Destination branch is required"}), 400
+
+        if requested_by is None:
+            return jsonify({"message": "Requested by is required"}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Check product reorder level
+        cur.execute("""
+            SELECT reorder_level
+            FROM product
+            WHERE product_id = %s
+        """, (product_id,))
+
+        product_row = cur.fetchone()
+
+        if not product_row:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Product not found"}), 404
+
+        reorder_level = int(product_row[0])
+
+        # Check destination branch stock
+        cur.execute("""
+            SELECT quantity_in_stock
+            FROM inventory
+            WHERE product_id = %s AND branch_id = %s
+        """, (product_id, to_branch_id))
+
+        dest_stock_row = cur.fetchone()
+
+        if not dest_stock_row:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Product is not assigned to this branch"}), 404
+
+        current_stock = int(dest_stock_row[0])
+
+        if current_stock > reorder_level:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "This product is not low stock"}), 400
+
+        request_qty = reorder_level - current_stock
+
+        if request_qty <= 0:
+            request_qty = reorder_level
+
+        # Prevent duplicate pending/approved request for same product and destination branch
+        cur.execute("""
+            SELECT st.transfer_id
+            FROM stock_transfer st
+            JOIN transfer_detail td ON st.transfer_id = td.transfer_id
+            WHERE st.to_branch_id = %s
+              AND td.product_id = %s
+              AND st.status IN ('PENDING', 'APPROVED')
+            LIMIT 1
+        """, (to_branch_id, product_id))
+
+        duplicate = cur.fetchone()
+
+        if duplicate:
+            cur.close()
+            conn.close()
+            return jsonify({
+                "message": "A pending or approved transfer already exists for this product"
+            }), 400
+
+        # Find best source branch with highest stock
+        cur.execute("""
+            SELECT branch_id, quantity_in_stock
+            FROM inventory
+            WHERE product_id = %s
+              AND branch_id <> %s
+              AND quantity_in_stock >= %s
+            ORDER BY quantity_in_stock DESC
+            LIMIT 1
+        """, (product_id, to_branch_id, request_qty))
+
+        source_row = cur.fetchone()
+
+        if not source_row:
+            cur.close()
+            conn.close()
+            return jsonify({
+                "message": "No branch has enough stock for this product"
+            }), 400
+
+        from_branch_id = source_row[0]
+
+        # Create transfer header
+        cur.execute("""
+            INSERT INTO stock_transfer (
+                from_branch_id,
+                to_branch_id,
+                status,
+                requested_by
+            )
+            VALUES (%s, %s, 'PENDING', %s)
+            RETURNING transfer_id, transfer_code
+        """, (from_branch_id, to_branch_id, requested_by))
+
+        transfer = cur.fetchone()
+        transfer_id = transfer[0]
+        transfer_code = transfer[1]
+
+        # Create transfer detail
+        cur.execute("""
+            INSERT INTO transfer_detail (
+                transfer_id,
+                product_id,
+                quantity
+            )
+            VALUES (%s, %s, %s)
+        """, (transfer_id, product_id, request_qty))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "message": "Stock transfer request created successfully",
+            "transfer_id": transfer_id,
+            "transfer_code": transfer_code,
+            "from_branch_id": from_branch_id,
+            "to_branch_id": to_branch_id,
+            "quantity": request_qty
+        }), 201
+
+    except Exception as e:
+        print("ERROR auto_suggest_transfer:", e)
+        return jsonify({"message": str(e)}), 500

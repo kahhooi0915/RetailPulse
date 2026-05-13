@@ -70,6 +70,14 @@ export default function StaffAnalytics() {
     localStorage.getItem("analyticsShowTopProductsPanel") !== "false"
   );
 
+  //Low Stock Request Modal states
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [selectedRequestItem, setSelectedRequestItem] = useState(null);
+  const [requestQuantity, setRequestQuantity] = useState("");
+  const [sourceBranchId, setSourceBranchId] = useState("");
+  const [requestLoading, setRequestLoading] = useState(false);
+  const [stockTransfers, setStockTransfers] = useState([]);
+
   useEffect(() => {
     const savedUser =
       JSON.parse(localStorage.getItem("user")) ||
@@ -88,13 +96,14 @@ export default function StaffAnalytics() {
     try {
       setLoading(true);
 
-      const [productRes, inventoryRes, salesRes, detailRes, userRes] =
+      const [productRes, inventoryRes, salesRes, detailRes, userRes, transferRes] =
         await Promise.all([
           fetch(`${API_BASE}/admin/products`),
           fetch(`${API_BASE}/admin/inventory`),
           fetch(`${API_BASE}/admin/sales`),
           fetch(`${API_BASE}/admin/sale-details`),
           fetch(`${API_BASE}/admin/users`),
+          fetch(`${API_BASE}/stock-transfers`),
         ]);
 
       setProducts(await productRes.json());
@@ -102,6 +111,7 @@ export default function StaffAnalytics() {
       setSales(await salesRes.json());
       setSaleDetails(await detailRes.json());
       setUsers(await userRes.json());
+      setStockTransfers(await transferRes.json());
     } catch (error) {
       console.error(error);
       alert("Failed to load analytics data.");
@@ -156,6 +166,19 @@ export default function StaffAnalytics() {
     .filter((item) => item.status === "LOW")
     .sort((a, b) => Number(a.quantity_in_stock) - Number(b.quantity_in_stock));
 }, [branchInventory, products]);
+
+  const availableSourceBranches = useMemo(() => {
+    if (!selectedRequestItem) return [];
+
+    return inventory
+      .filter(
+        (item) =>
+          Number(item.product_id) === Number(selectedRequestItem.product_id) &&
+          Number(item.branch_id) !== Number(user?.branch_id) &&
+          Number(item.quantity_in_stock) > 0
+      )
+      .sort((a, b) => Number(b.quantity_in_stock) - Number(a.quantity_in_stock));
+  }, [inventory, selectedRequestItem, user]);
 
   const salePerformanceData = useMemo(() => {
     const grouped = {};
@@ -227,6 +250,99 @@ export default function StaffAnalytics() {
     (sum, item) => sum + Number(item.quantity_in_stock || 0),
     0
   );
+
+  const hasPendingTransferRequest = (productId) => {
+    return stockTransfers.some(
+      (transfer) =>
+        Number(transfer.to_branch_id) === Number(user?.branch_id) &&
+        transfer.status === "PENDING"
+    );
+  };
+
+
+  const openRequestModal = (item) => {
+    setSelectedRequestItem(item);
+    setRequestQuantity("");
+    setSourceBranchId("");
+    setShowRequestModal(true);
+  };
+
+  const submitStockRequest = async () => {
+    if (!selectedRequestItem) return;
+
+    if (!sourceBranchId) {
+      alert("Please select source branch.");
+      return;
+    }
+
+    if (!requestQuantity || Number(requestQuantity) <= 0) {
+      alert("Please enter valid quantity.");
+      return;
+    }
+
+    try {
+      setRequestLoading(true);
+
+      const transferRes = await fetch(`${API_BASE}/staff/stock-transfer/request`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from_branch_id: Number(sourceBranchId),
+          to_branch_id: Number(user.branch_id),
+          requested_by: Number(user.user_id),
+        }),
+      });
+
+      const transferData = await transferRes.json();
+
+      if (!transferRes.ok) {
+        throw new Error(transferData.message || "Failed to create transfer request.");
+      }
+
+      const itemRes = await fetch(
+        `${API_BASE}/stock-transfer/${transferData.transfer_id}/add-item`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            product_id: Number(selectedRequestItem.product_id),
+            quantity: Number(requestQuantity),
+          }),
+        }
+      );
+
+      const itemData = await itemRes.json();
+
+      if (!itemRes.ok) {
+        throw new Error(itemData.message || "Failed to add transfer item.");
+      }
+
+      setShowRequestModal(false);
+      setSelectedRequestItem(null);
+      setRequestQuantity("");
+      setSourceBranchId("");
+
+      fetchAnalyticsData(user);
+      
+      setToast({
+        show: true,
+        message: "Stock request submitted successfully",
+      });
+
+      setTimeout(() => {
+        setToast({ show: false, message: "" });
+      }, 2500);
+    } catch (error) {
+      console.error(error);
+      alert(error.message);
+    } finally {
+      setRequestLoading(false);
+    }
+  };
 
   const logout = () => {
     localStorage.removeItem("user");
@@ -399,6 +515,23 @@ export default function StaffAnalytics() {
                         Reorder: {item.reorder_level}
                         </span>
                     </div>
+
+                    {hasPendingTransferRequest(item.product_id) ? (
+                      <button
+                        disabled
+                        className="mt-4 w-full rounded-full bg-gray-300 py-3 text-sm font-extrabold text-gray-600"
+                      >
+                        Requested / Pending Approval
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => openRequestModal(item)}
+                        className="mt-4 w-full rounded-full bg-[#0c2f73] py-3 text-sm font-extrabold text-white hover:bg-[#173f8a]"
+                      >
+                        Request Stock
+                      </button>
+                    )}
+
                     </div>
                 ))}
                 </div>
@@ -594,6 +727,95 @@ export default function StaffAnalytics() {
         </motion.main>
      
     </div>
+
+    {/* Low stock request modal */}
+      {showRequestModal && selectedRequestItem && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="w-[480px] rounded-3xl bg-white p-7 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-2xl font-extrabold text-[#07102f]">
+                Request Stock
+              </h2>
+
+              <button
+                onClick={() => setShowRequestModal(false)}
+                className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-5 text-sm text-[#17325c]">
+              <div className="rounded-2xl bg-red-50 p-4">
+                <p className="text-xs font-bold uppercase text-red-500">
+                  Low Stock Product
+                </p>
+                <h3 className="mt-1 text-lg font-extrabold">
+                  {selectedRequestItem.product_name}
+                </h3>
+                <p className="mt-1 text-xs text-[#6f85a3]">
+                  Current Stock: {selectedRequestItem.quantity_in_stock} | Reorder Level:{" "}
+                  {selectedRequestItem.reorder_level}
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-2 block font-extrabold">Source Branch</label>
+                <select
+                  value={sourceBranchId}
+                  onChange={(e) => setSourceBranchId(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+                >
+                  <option value="">Select available branch</option>
+                  {availableSourceBranches.map((branch) => (
+                    <option
+                      key={`${branch.product_id}-${branch.branch_id}`}
+                      value={branch.branch_id}
+                    >
+                      {branch.branch_name} — Stock: {branch.quantity_in_stock}
+                    </option>
+                  ))}
+                </select>
+
+                {availableSourceBranches.length === 0 && (
+                  <p className="mt-2 text-xs font-bold text-red-500">
+                    No other branch has available stock for this product.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-2 block font-extrabold">Request Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={requestQuantity}
+                  onChange={(e) => setRequestQuantity(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3 outline-none focus:ring-2 focus:ring-[#0c2f73]"
+                  placeholder="Enter quantity"
+                />
+              </div>
+            </div>
+
+            <div className="mt-7 grid grid-cols-2 gap-4">
+              <button
+                onClick={() => setShowRequestModal(false)}
+                className="rounded-full border border-[#0c2f73] bg-white py-4 font-extrabold text-[#0c2f73]"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={submitStockRequest}
+                disabled={requestLoading || availableSourceBranches.length === 0}
+                className="rounded-full bg-[#0c2f73] py-4 font-extrabold text-white disabled:cursor-not-allowed disabled:bg-gray-400"
+              >
+                {requestLoading ? "Submitting..." : "Submit Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     {showHelp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">

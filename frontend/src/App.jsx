@@ -5,6 +5,9 @@ import Staff from "./pages/Staff";
 import Manager from "./pages/Manager";
 import StaffAnalytics from "./pages/StaffAnalytics";
 import UserProfile from "./pages/UserProfile";
+import ManagerStockTransfer from "./pages/ManagerStockTransfer";
+import ManagerDashboard from "./pages/ManagerDashboard";
+import ManagerBranchInventory from "./pages/ManagerBranchInventory";
 
 function App() {
   return (
@@ -16,6 +19,9 @@ function App() {
         <Route path="/manager" element={<Manager />} />
         <Route path="/staff-analytics" element={<StaffAnalytics />} />
         <Route path="/user-profile" element={<UserProfile />} />
+        <Route path="/manager-stock-transfer" element={<ManagerStockTransfer />} />
+        <Route path="/manager-dashboard" element={<ManagerDashboard />} />
+        <Route path="/manager-inventory" element={<ManagerBranchInventory />} />
       </Routes>
     </BrowserRouter>
   );

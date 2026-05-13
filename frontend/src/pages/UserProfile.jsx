@@ -16,6 +16,8 @@ import {
   Building2,
   KeyRound,
   IdCard,
+  Truck,
+  Boxes,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -188,6 +190,10 @@ export default function UserProfile() {
     );
   }
 
+  const isManager = form.role === "INVENTORY_MANAGER";
+  const profileTitle = isManager ? "Manager Profile" : "Staff Profile";
+  const roleIdLabel = isManager ? "Manager ID" : "Staff ID";
+
   return (
     <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
       <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
@@ -199,38 +205,69 @@ export default function UserProfile() {
 
           <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
             <h4 className="font-extrabold text-[#16325b]">
-              {form.branch_name || "Main Branch"}
+              {form.branch_name || "Branch"}
             </h4>
             <p className="mt-1 text-xs text-[#6f85a3]">
-              Staff ID: {user?.user_id}
+              {roleIdLabel}: {user?.user_id}
             </p>
           </div>
 
           <nav className="space-y-3">
-            <button
-              onClick={() => navigate("/staff")}
-              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
-            >
-              <ShoppingCart size={18} />
-              <span>POS Terminal</span>
-            </button>
+            {isManager ? (
+              <>
+                <button
+                  onClick={() => navigate("/manager-dashboard")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <BarChart3 size={18} />
+                  <span>Dashboard</span>
+                </button>
 
-            <button
-              onClick={() => navigate("/staff-analytics")}
-              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
-            >
-              <BarChart3 size={18} />
-              <span>Analytics</span>
-            </button>
+                <button
+                  onClick={() => navigate("/manager-stock-transfer")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <Truck size={18} />
+                  <span>Stock Transfer</span>
+                </button>
 
+                <button
+                  onClick={() => navigate("/manager-inventory")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <Boxes size={18} />
+                  <span>Branch Inventory</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => navigate("/staff")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <ShoppingCart size={18} />
+                  <span>POS Terminal</span>
+                </button>
+
+                <button
+                  onClick={() => navigate("/staff-analytics")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <BarChart3 size={18} />
+                  <span>Analytics</span>
+                </button>
+              </>
+            )}
           </nav>
 
           <div className="mt-auto space-y-3">
-            <button onClick={() => setShowHelp(true)} className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]">
+            <button
+              onClick={() => setShowHelp(true)}
+              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]"
+            >
               <HelpCircle size={17} />
               <span>Help Support</span>
             </button>
-
           </div>
         </aside>
 
@@ -245,7 +282,7 @@ export default function UserProfile() {
           <header className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-extrabold text-[#07102f]">
-                Staff Profile
+                {profileTitle}
               </h1>
               <p className="mt-1 text-sm text-[#6f85a3]">
                 Manage your personal information. Email, role, user code and password are controlled by admin.
