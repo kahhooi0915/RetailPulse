@@ -11,6 +11,7 @@ from routes.product_routes import product_bp
 from routes.inventory_routes import inventory_bp
 from routes.sales_routes import sales_bp
 from routes.stock_transfer_routes import stock_transfer_bp
+from routes.forecast_routes import forecast_bp
 
 
 def create_app():
@@ -34,7 +35,8 @@ def create_app():
     app.register_blueprint(inventory_bp)
     app.register_blueprint(sales_bp)
     app.register_blueprint(stock_transfer_bp)
-
+    app.register_blueprint(forecast_bp)
+    
     return app
 
 

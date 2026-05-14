@@ -122,6 +122,49 @@ def login():
 
         cur.execute("""
             SELECT u.user_id, u.name, u.email, u.role,
+                   u.branch_id, b.branch_name, u.status
+            FROM users u
+            LEFT JOIN branch b ON u.branch_id = b.branch_id
+            WHERE LOWER(u.email) = LOWER(%s)
+              AND u.password = %s
+              AND u.status = 'ACTIVE'
+        """, (email.strip(), password))
+
+        user = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        if user:
+            return jsonify({
+                "user_id": user[0],
+                "name": user[1],
+                "email": user[2],
+                "role": user[3],
+                "branch_id": user[4],
+                "branch_name": user[5],
+                "status": user[6]
+            }), 200
+        else:
+            return jsonify({"message": "Invalid email, password, or inactive account"}), 401
+
+    except Exception as e:
+        print("ERROR /login:", e)
+        return jsonify({"message": str(e)}), 500
+    try:
+        data = request.get_json()
+
+        email = data.get("email")
+        password = data.get("password")
+
+        if not email or not password:
+            return jsonify({"message": "Email and password required"}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT u.user_id, u.name, u.email, u.role,
                    u.branch_id, b.branch_name
             FROM users u
             LEFT JOIN branch b ON u.branch_id = b.branch_id

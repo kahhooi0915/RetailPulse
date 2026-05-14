@@ -282,7 +282,7 @@ export default function UserProfile() {
           <header className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-extrabold text-[#07102f]">
-                {profileTitle}
+                {profileTitle}  
               </h1>
               <p className="mt-1 text-sm text-[#6f85a3]">
                 Manage your personal information. Email, role, user code and password are controlled by admin.
