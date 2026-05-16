@@ -1,11 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  AlertTriangle,
   BarChart3,
   Bell,
+  Bot,
   Boxes,
   Building2,
+  ChevronRight,
+  FolderKanban,
   HelpCircle,
+  LogOut,
   Package,
   RefreshCcw,
   Settings,
@@ -13,10 +18,6 @@ import {
   TrendingUp,
   Truck,
   Users,
-  AlertTriangle,
-  FolderKanban,
-  Bot,
-  LogOut,
 } from "lucide-react";
 
 import {
@@ -49,6 +50,10 @@ export default function AdminDashboard() {
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
+  const [sidebarPinned, setSidebarPinned] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const sidebarOpen = sidebarPinned || sidebarHovered;
+
   const [settingsData, setSettingsData] = useState(() => {
     const savedSettings = localStorage.getItem("adminSettings");
 
@@ -78,34 +83,11 @@ export default function AdminDashboard() {
     }
 
     setUser(savedUser);
-    fetchData();
   }, [navigate]);
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-
-      const [
-        usersRes,
-        branchesRes,
-        productsRes,
-        categoriesRes,
-        inventoryRes,
-        salesRes,
-      ] = await Promise.all([
-        fetch(`${API_BASE}/admin/users`),
-        fetch(`${API_BASE}/admin/branches`),
-        fetch(`${API_BASE}/admin/products`),
-        fetch(`${API_BASE}/admin/categories`),
-        fetch(`${API_BASE}/admin/inventory`),
-        fetch(`${API_BASE}/admin/sales`),
-      ]);
-
-      setUsers(Array.isArray(await usersRes.json()) ? await usersRes.clone().json() : []);
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  useEffect(() => {
+    if (user) loadData();
+  }, [user]);
 
   const loadData = async () => {
     try {
@@ -148,10 +130,6 @@ export default function AdminDashboard() {
     }
   };
 
-  useEffect(() => {
-    if (user) loadData();
-  }, [user]);
-
   const refreshData = () => loadData();
 
   const logout = () => {
@@ -179,21 +157,15 @@ export default function AdminDashboard() {
 
   const notificationCount = notificationRead ? 0 : lowStockItems.length;
 
-  // ADD THIS useEffect HERE
   useEffect(() => {
-    if (lowStockItems.length > 0) {
-      const previousCount = Number(
-        localStorage.getItem("adminLowStockCount") || 0
-      );
+    const previousCount = Number(
+      localStorage.getItem("adminLowStockCount") || 0
+    );
 
-      if (lowStockItems.length !== previousCount) {
-        setNotificationRead(false);
-        localStorage.setItem("adminNotificationRead", "false");
-        localStorage.setItem(
-          "adminLowStockCount",
-          String(lowStockItems.length)
-        );
-      }
+    if (lowStockItems.length !== previousCount) {
+      setNotificationRead(false);
+      localStorage.setItem("adminNotificationRead", "false");
+      localStorage.setItem("adminLowStockCount", String(lowStockItems.length));
     }
   }, [lowStockItems.length]);
 
@@ -222,12 +194,10 @@ export default function AdminDashboard() {
     .sort((a, b) => Number(a.revenue || 0) - Number(b.revenue || 0))
     .slice(0, 5);
 
-  const branchSalesPieData = top10Branches
-    .slice(0, 5)
-    .map((branch) => ({
-      name: branch.branch_name.replace("RetailPulse ", ""),
-      value: Number(branch.revenue || 0),
-    }));
+  const branchSalesPieData = top10Branches.slice(0, 5).map((branch) => ({
+    name: branch.branch_name.replace("RetailPulse ", ""),
+    value: Number(branch.revenue || 0),
+  }));
 
   const pieColors = ["#1e4db7", "#22c55e", "#f97316", "#8b5cf6", "#ef4444"];
 
@@ -256,88 +226,77 @@ export default function AdminDashboard() {
       .slice(0, 5);
   }, [inventory]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen grid place-items-center bg-[#eef6fb] text-[#6f85a3]">
-        <div className="text-center">
-          <BarChart3 size={42} className="mx-auto mb-3" />
-          <p className="font-semibold">Loading Admin Dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
-      <div className="grid h-full grid-cols-[250px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
-          <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
-            RetailPulse
+      <div
+        className={`grid h-full transition-all duration-300 ${sidebarOpen
+            ? "grid-cols-[250px_minmax(0,1fr)]"
+            : "grid-cols-[86px_minmax(0,1fr)]"
+          }`}
+      >
+        <aside
+          onMouseEnter={() => setSidebarHovered(true)}
+          onMouseLeave={() => setSidebarHovered(false)}
+          className={`relative flex min-h-0 flex-col bg-[#d9edf8] py-6 border-r border-blue-100 transition-all duration-300 ${sidebarOpen ? "px-5" : "px-3"
+            }`}
+        >
+          <div
+            className={`mb-8 flex items-center ${sidebarOpen ? "justify-between" : "justify-center"
+              }`}
+          >
+            {sidebarOpen && (
+              <div className="text-2xl font-extrabold text-[#1e4db7]">
+                RetailPulse
+              </div>
+            )}
+
+            <button
+              onClick={() => setSidebarPinned(!sidebarPinned)}
+              className="grid h-9 w-9 place-items-center rounded-full bg-white text-[#1e4db7] shadow"
+              title={sidebarPinned ? "Collapse sidebar" : "Pin sidebar"}
+            >
+              <ChevronRight
+                size={18}
+                className={`transition-transform duration-300 ${sidebarPinned ? "rotate-180" : ""
+                  }`}
+              />
+            </button>
           </div>
 
-          <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
-            <h4 className="font-extrabold text-[#16325b]">
-              {user?.name || "System Admin"}
-            </h4>
-            <p className="mt-1 text-xs text-[#6f85a3]">
-              Admin ID: {user?.user_id || "-"}
-            </p>
-          </div>
+          {sidebarOpen && (
+            <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
+              <h4 className="font-extrabold text-[#16325b]">
+                {user?.name || "System Admin"}
+              </h4>
+              <p className="mt-1 text-xs text-[#6f85a3]">
+                Admin ID: {user?.user_id || "-"}
+              </p>
+            </div>
+          )}
 
           <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
-            <SidebarButton active icon={BarChart3} label="Dashboard" />
+            <SidebarButton sidebarOpen={sidebarOpen} active icon={BarChart3} label="Dashboard" />
 
-            <SidebarButton
-              icon={Users}
-              label="User Management"
-              onClick={() => navigate("/admin/users")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={Users} label="User Management" onClick={() => navigate("/admin/users")} />
 
-            <SidebarButton
-              icon={Building2}
-              label="Branch Management"
-              onClick={() => navigate("/admin/branches")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={Building2} label="Branch Management" onClick={() => navigate("/admin/branches")} />
 
-            <SidebarButton
-              icon={FolderKanban}
-              label="Catalog Management"
-              onClick={() => navigate("/admin/catalog")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={FolderKanban} label="Catalog Management" onClick={() => navigate("/admin/catalog")} />
 
-            <SidebarButton
-              icon={Boxes}
-              label="Inventory Overview"
-              onClick={() => navigate("/admin/inventory")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={Boxes} label="Inventory Overview" onClick={() => navigate("/admin/inventory")} />
 
-            <SidebarButton
-              icon={ShoppingCart}
-              label="Sales Monitoring"
-              onClick={() => navigate("/admin/sales")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={ShoppingCart} label="Sales Monitoring" onClick={() => navigate("/admin/sales")} />
 
-            <SidebarButton
-              icon={Truck}
-              label="Stock Transfers"
-              onClick={() => navigate("/admin/transfers")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={Truck} label="Stock Transfers" onClick={() => navigate("/admin/transfers")} />
 
-            <SidebarButton
-              icon={TrendingUp}
-              label="Reports & Forecasting"
-              onClick={() => navigate("/admin/reports")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={TrendingUp} label="Reports & Forecasting" onClick={() => navigate("/admin/reports")} />
 
-            <SidebarButton
-              icon={Bot}
-              label="AI Assistant"
-              onClick={() => navigate("/admin/assistant")}
-            />
+            <SidebarButton sidebarOpen={sidebarOpen} icon={Bot} label="AI Assistant" onClick={() => navigate("/admin/assistant")} />
           </nav>
 
           <div className="mt-4">
             <SidebarButton
+              sidebarOpen={sidebarOpen}
               icon={HelpCircle}
               label="Help Support"
               onClick={() => setShowHelp(true)}
@@ -425,300 +384,311 @@ export default function AdminDashboard() {
             </div>
           </header>
 
-          <section className="mb-6 grid grid-cols-2 gap-5 xl:grid-cols-4">
-            <SummaryCard title="Total Users" value={users.length} icon={Users} color="text-[#1e4db7]" />
-            <SummaryCard title="Branches" value={branches.length} icon={Building2} color="text-[#1e4db7]" />
-            <SummaryCard title="Products" value={products.length} icon={Package} color="text-green-600" />
-            <SummaryCard title="Categories" value={categories.length} icon={FolderKanban} color="text-[#07102f]" />
-          </section>
-
-          <section className="mb-6 grid grid-cols-2 gap-5 xl:grid-cols-4">
-            <SummaryCard title="Total Sales" value={formatCurrency(totalSales)} icon={TrendingUp} color="text-green-600" />
-            <SummaryCard title="Sales Records" value={sales.length} icon={ShoppingCart} color="text-[#1e4db7]" />
-            <SummaryCard title="Inventory Records" value={inventory.length} icon={Boxes} color="text-[#07102f]" />
-            <SummaryCard title="Low Stock Items" value={lowStockItems.length} icon={AlertTriangle} color="text-orange-600" />
-          </section>
-
-          <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-extrabold text-[#07102f]">
-                Branch Sales Performance
-              </h2>
-              <p className="mt-1 text-sm text-[#6f85a3]">
-                Revenue comparison across all branches.
-              </p>
-
-              <div className="mt-5 space-y-4">
-                {top10Branches.map((branch) => {
-                  const maxRevenue = Math.max(
-                    ...branchPerformance.map((item) => item.revenue),
-                    1
-                  );
-                  const width = `${(branch.revenue / maxRevenue) * 100}%`;
-
-                  return (
-                    <div key={branch.branch_id}>
-                      <div className="mb-2 flex items-center justify-between text-sm">
-                        <div className="font-extrabold text-[#17325c]">
-                          {branch.branch_name}
-                        </div>
-                        <div className="font-bold text-[#6f85a3]">
-                          {formatCurrency(branch.revenue)}
-                        </div>
-                      </div>
-
-                      <div className="h-3 overflow-hidden rounded-full bg-[#eef6fb]">
-                        <div
-                          className="h-full rounded-full bg-[#1e4db7]"
-                          style={{ width }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {branchPerformance.length === 0 && (
-                  <EmptyBox text="No branch performance data found." />
-                )}
+          {loading ? (
+            <div className="grid min-h-[70vh] place-items-center text-[#6f85a3]">
+              <div className="text-center">
+                <BarChart3 size={42} className="mx-auto mb-3" />
+                <p className="font-semibold">Loading admin dashboard data...</p>
               </div>
             </div>
+          ) : (
+            <>
+              <section className="mb-6 grid grid-cols-2 gap-5 xl:grid-cols-4">
+                <SummaryCard title="Total Users" value={users.length} icon={Users} color="text-[#1e4db7]" />
+                <SummaryCard title="Branches" value={branches.length} icon={Building2} color="text-[#1e4db7]" />
+                <SummaryCard title="Products" value={products.length} icon={Package} color="text-green-600" />
+                <SummaryCard title="Categories" value={categories.length} icon={FolderKanban} color="text-[#07102f]" />
+              </section>
 
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-extrabold text-[#07102f]">
-                System Operations
-              </h2>
-              <p className="mt-1 text-sm text-[#6f85a3]">
-                Latest system activity summary.
-              </p>
+              <section className="mb-6 grid grid-cols-2 gap-5 xl:grid-cols-4">
+                <SummaryCard title="Total Sales" value={formatCurrency(totalSales)} icon={TrendingUp} color="text-green-600" />
+                <SummaryCard title="Sales Records" value={sales.length} icon={ShoppingCart} color="text-[#1e4db7]" />
+                <SummaryCard title="Inventory Records" value={inventory.length} icon={Boxes} color="text-[#07102f]" />
+                <SummaryCard title="Low Stock Items" value={lowStockItems.length} icon={AlertTriangle} color="text-orange-600" />
+              </section>
 
-              <div className="mt-5 space-y-4">
-                <ActivityDot color="bg-blue-600" title="Product Records" desc={`${products.length} product(s) available.`} />
-                <ActivityDot color="bg-green-600" title="Sales Records" desc={`${sales.length} sale transaction(s) recorded.`} />
-                <ActivityDot color="bg-orange-500" title="Low Stock Alert" desc={`${lowStockItems.length} item(s) below reorder level.`} />
-                <ActivityDot color="bg-slate-400" title="Branch Records" desc={`${branches.length} branch(es) registered.`} />
-              </div>
-            </div>
-          </section>
+              <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Branch Sales Performance
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    Revenue comparison across all branches.
+                  </p>
 
-          <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-extrabold text-[#07102f]">
-                Top 5 Sales Distribution by Branch
-              </h2>
-              <p className="mt-1 text-sm text-[#6f85a3]">
-                Visual breakdown of total sales revenue for the top five performing branches.
-              </p>
+                  <div className="mt-5 space-y-4">
+                    {top10Branches.map((branch) => {
+                      const maxRevenue = Math.max(
+                        ...branchPerformance.map((item) => item.revenue),
+                        1
+                      );
+                      const width = `${(branch.revenue / maxRevenue) * 100}%`;
 
-              <div className="mt-6 h-[300px]">
-                {branchSalesPieData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={branchSalesPieData}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={90}
-                        label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                      return (
+                        <div key={branch.branch_id}>
+                          <div className="mb-2 flex items-center justify-between text-sm">
+                            <div className="font-extrabold text-[#17325c]">
+                              {branch.branch_name}
+                            </div>
+                            <div className="font-bold text-[#6f85a3]">
+                              {formatCurrency(branch.revenue)}
+                            </div>
+                          </div>
+
+                          <div className="h-3 overflow-hidden rounded-full bg-[#eef6fb]">
+                            <div
+                              className="h-full rounded-full bg-[#1e4db7]"
+                              style={{ width }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {branchPerformance.length === 0 && (
+                      <EmptyBox text="No branch performance data found." />
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    System Operations
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    Latest system activity summary.
+                  </p>
+
+                  <div className="mt-5 space-y-4">
+                    <ActivityDot color="bg-blue-600" title="Product Records" desc={`${products.length} product(s) available.`} />
+                    <ActivityDot color="bg-green-600" title="Sales Records" desc={`${sales.length} sale transaction(s) recorded.`} />
+                    <ActivityDot color="bg-orange-500" title="Low Stock Alert" desc={`${lowStockItems.length} item(s) below reorder level.`} />
+                    <ActivityDot color="bg-slate-400" title="Branch Records" desc={`${branches.length} branch(es) registered.`} />
+                  </div>
+                </div>
+              </section>
+
+              <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Top 5 Sales Distribution by Branch
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    Visual breakdown of total sales revenue for the top five performing branches.
+                  </p>
+
+                  <div className="mt-6 h-[300px]">
+                    {branchSalesPieData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={branchSalesPieData}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={90}
+                            label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                          >
+                            {branchSalesPieData.map((entry, index) => (
+                              <Cell
+                                key={`cell-${index}`}
+                                fill={pieColors[index % pieColors.length]}
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value) => formatCurrency(value)} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <EmptyBox text="No branch sales data available for chart." />
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Inventory Status Overview
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    Comparison between low stock and normal stock items.
+                  </p>
+
+                  <div className="mt-6 h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: "Low Stock", value: lowStockItems.length },
+                            {
+                              name: "Normal Stock",
+                              value: Math.max(inventory.length - lowStockItems.length, 0),
+                            },
+                          ]}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={90}
+                          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                        >
+                          <Cell fill="#ef4444" />
+                          <Cell fill="#1e4db7" />
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </section>
+
+              <section className="mb-6">
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Lowest Performing Branches
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    Bottom 5 branches with the lowest sales revenue.
+                  </p>
+
+                  <div className="mt-5 space-y-4">
+                    {bottom5Branches.map((branch) => (
+                      <div
+                        key={branch.branch_id}
+                        className="flex items-center justify-between rounded-2xl bg-[#fff5f5] px-4 py-4"
                       >
-                        {branchSalesPieData.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={pieColors[index % pieColors.length]}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => formatCurrency(value)} />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyBox text="No branch sales data available for chart." />
-                )}
-              </div>
-            </div>
+                        <div>
+                          <p className="font-extrabold text-[#17325c]">
+                            {branch.branch_name}
+                          </p>
+                          <p className="text-xs font-semibold text-[#6f85a3]">
+                            {branch.branch_code}
+                          </p>
+                        </div>
 
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-extrabold text-[#07102f]">
-                Inventory Status Overview
-              </h2>
-              <p className="mt-1 text-sm text-[#6f85a3]">
-                Comparison between low stock and normal stock items.
-              </p>
-
-              <div className="mt-6 h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: "Low Stock", value: lowStockItems.length },
-                        {
-                          name: "Normal Stock",
-                          value: Math.max(inventory.length - lowStockItems.length, 0),
-                        },
-                      ]}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={90}
-                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                    >
-                      <Cell fill="#ef4444" />
-                      <Cell fill="#1e4db7" />
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </section>
-
-          <section className="mb-6">
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-extrabold text-[#07102f]">
-                Lowest Performing Branches
-              </h2>
-              <p className="mt-1 text-sm text-[#6f85a3]">
-                Bottom 5 branches with the lowest sales revenue.
-              </p>
-
-              <div className="mt-5 space-y-4">
-                {bottom5Branches.map((branch) => (
-                  <div
-                    key={branch.branch_id}
-                    className="flex items-center justify-between rounded-2xl bg-[#fff5f5] px-4 py-4"
-                  >
-                    <div>
-                      <p className="font-extrabold text-[#17325c]">
-                        {branch.branch_name}
-                      </p>
-                      <p className="text-xs font-semibold text-[#6f85a3]">
-                        {branch.branch_code}
-                      </p>
-                    </div>
-
-                    <span className="font-extrabold text-red-500">
-                      {formatCurrency(branch.revenue)}
-                    </span>
-                  </div>
-                ))}
-
-                {bottom5Branches.length === 0 && (
-                  <EmptyBox text="No branch sales data available." />
-                )}
-              </div>
-            </div>
-          </section>
-          
-          <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                Top Stock Products
-              </h2>
-
-              <div className="space-y-3">
-                {topProducts.map((item) => (
-                  <div key={item.product_id} className="flex items-center justify-between rounded-2xl bg-[#f8fcff] p-4">
-                    <div>
-                      <p className="font-extrabold text-[#17325c]">{item.product_name}</p>
-                      <p className="text-xs font-bold text-[#6f85a3]">{item.product_code}</p>
-                    </div>
-
-                    <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-[#1e4db7]">
-                      {item.quantity}
-                    </span>
-                  </div>
-                ))}
-
-                {topProducts.length === 0 && <EmptyBox text="No product stock data found." />}
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                Critical Low Stock
-              </h2>
-
-              <div className="overflow-hidden rounded-2xl border border-blue-50">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
-                    <tr>
-                      <th className="px-4 py-3">Product</th>
-                      <th className="px-4 py-3">Branch</th>
-                      <th className="px-4 py-3">Stock</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {lowStockItems.slice(0, 6).map((item) => (
-                      <tr key={`${item.product_id}-${item.branch_id}`} className="border-t">
-                        <td className="px-4 py-4 font-bold">{item.product_name}</td>
-                        <td className="px-4 py-4">{item.branch_name}</td>
-                        <td className="px-4 py-4">
-                          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-extrabold text-red-600">
-                            {item.quantity_in_stock} left
-                          </span>
-                        </td>
-                      </tr>
+                        <span className="font-extrabold text-red-500">
+                          {formatCurrency(branch.revenue)}
+                        </span>
+                      </div>
                     ))}
 
-                    {lowStockItems.length === 0 && (
-                      <tr>
-                        <td colSpan="3" className="px-4 py-6 text-center font-semibold text-[#6f85a3]">
-                          No critical low stock items found.
-                        </td>
-                      </tr>
+                    {bottom5Branches.length === 0 && (
+                      <EmptyBox text="No branch sales data available." />
                     )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
+                  </div>
+                </div>
+              </section>
 
-          <section className="rounded-2xl bg-white p-6 shadow-sm">
-            <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-              Recent Sales
-            </h2>
+              <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
+                    Top Stock Products
+                  </h2>
 
-            <div className="overflow-hidden rounded-2xl border border-blue-50">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
-                  <tr>
-                    <th className="px-4 py-3">Sale Code</th>
-                    <th className="px-4 py-3">Branch</th>
-                    <th className="px-4 py-3">Staff</th>
-                    <th className="px-4 py-3">Amount</th>
-                    <th className="px-4 py-3">Payment</th>
-                  </tr>
-                </thead>
+                  <div className="space-y-3">
+                    {topProducts.map((item) => (
+                      <div key={item.product_id} className="flex items-center justify-between rounded-2xl bg-[#f8fcff] p-4">
+                        <div>
+                          <p className="font-extrabold text-[#17325c]">{item.product_name}</p>
+                          <p className="text-xs font-bold text-[#6f85a3]">{item.product_code}</p>
+                        </div>
 
-                <tbody>
-                  {recentSales.map((sale) => (
-                    <tr key={sale.sale_id} className="border-t">
-                      <td className="px-4 py-4 font-bold">{sale.sale_code}</td>
-                      <td className="px-4 py-4">{sale.branch_name}</td>
-                      <td className="px-4 py-4">{sale.user_name}</td>
-                      <td className="px-4 py-4 font-bold text-green-600">
-                        {formatCurrency(sale.total_amount)}
-                      </td>
-                      <td className="px-4 py-4">{sale.payment_method}</td>
-                    </tr>
-                  ))}
+                        <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-[#1e4db7]">
+                          {item.quantity}
+                        </span>
+                      </div>
+                    ))}
 
-                  {recentSales.length === 0 && (
-                    <tr>
-                      <td colSpan="5" className="px-4 py-6 text-center font-semibold text-[#6f85a3]">
-                        No recent sales found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                    {topProducts.length === 0 && <EmptyBox text="No product stock data found." />}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                  <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
+                    Critical Low Stock
+                  </h2>
+
+                  <div className="overflow-hidden rounded-2xl border border-blue-50">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
+                        <tr>
+                          <th className="px-4 py-3">Product</th>
+                          <th className="px-4 py-3">Branch</th>
+                          <th className="px-4 py-3">Stock</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {lowStockItems.slice(0, 6).map((item) => (
+                          <tr key={`${item.product_id}-${item.branch_id}`} className="border-t">
+                            <td className="px-4 py-4 font-bold">{item.product_name}</td>
+                            <td className="px-4 py-4">{item.branch_name}</td>
+                            <td className="px-4 py-4">
+                              <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-extrabold text-red-600">
+                                {item.quantity_in_stock} left
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+
+                        {lowStockItems.length === 0 && (
+                          <tr>
+                            <td colSpan="3" className="px-4 py-6 text-center font-semibold text-[#6f85a3]">
+                              No critical low stock items found.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-2xl bg-white p-6 shadow-sm">
+                <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
+                  Recent Sales
+                </h2>
+
+                <div className="overflow-hidden rounded-2xl border border-blue-50">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
+                      <tr>
+                        <th className="px-4 py-3">Sale Code</th>
+                        <th className="px-4 py-3">Branch</th>
+                        <th className="px-4 py-3">Staff</th>
+                        <th className="px-4 py-3">Amount</th>
+                        <th className="px-4 py-3">Payment</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {recentSales.map((sale) => (
+                        <tr key={sale.sale_id} className="border-t">
+                          <td className="px-4 py-4 font-bold">{sale.sale_code}</td>
+                          <td className="px-4 py-4">{sale.branch_name}</td>
+                          <td className="px-4 py-4">{sale.user_name}</td>
+                          <td className="px-4 py-4 font-bold text-green-600">
+                            {formatCurrency(sale.total_amount)}
+                          </td>
+                          <td className="px-4 py-4">{sale.payment_method}</td>
+                        </tr>
+                      ))}
+
+                      {recentSales.length === 0 && (
+                        <tr>
+                          <td colSpan="5" className="px-4 py-6 text-center font-semibold text-[#6f85a3]">
+                            No recent sales found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </>
+          )}
         </motion.main>
       </div>
 
@@ -848,18 +818,24 @@ export default function AdminDashboard() {
   );
 }
 
-function SidebarButton({ icon: Icon, label, active, onClick }) {
+function SidebarButton({ icon: Icon, label, active, onClick, sidebarOpen }) {
   return (
     <button
       onClick={onClick}
       title={label}
-      className={`flex w-full items-center gap-3 rounded-2xl px-4 py-4 text-left transition ${active
+      className={`flex w-full items-center rounded-2xl py-4 text-left transition ${sidebarOpen ? "gap-3 px-4 justify-start" : "justify-center px-0"
+        } ${active
           ? "bg-white font-bold text-[#1e4db7] shadow"
           : "bg-white/30 font-semibold text-[#254e7a] hover:bg-white/70"
         }`}
     >
       <Icon size={18} className="shrink-0" />
-      <span className="min-w-0 truncate text-sm">{label}</span>
+
+      {sidebarOpen && (
+        <span className="min-w-0 truncate text-sm">
+          {label}
+        </span>
+      )}
     </button>
   );
 }

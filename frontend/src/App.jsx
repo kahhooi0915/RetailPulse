@@ -10,6 +10,11 @@ import ManagerBranchInventory from "./pages/ManagerBranchInventory";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminReportsForecasting from "./pages/AdminReportsForecasting";
 import AdminUserManagement from "./pages/AdminUserManagement";
+import AdminBranchManagement from "./pages/AdminBranchManagement";
+import AdminCatalogManagement from "./pages/AdminCatalogManagement";
+import AdminSalesMonitoring from "./pages/AdminSalesMonitoring";
+import AdminInventoryOverview from "./pages/AdminInventoryOverview";
+
 function App() {
   return (
     <BrowserRouter>
@@ -25,6 +30,10 @@ function App() {
         <Route path="/manager-inventory" element={<ManagerBranchInventory />} />
         <Route path="/admin/reports" element={<AdminReportsForecasting />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />
+        <Route path="/admin/branches" element={<AdminBranchManagement />} />
+        <Route path="/admin/catalog" element={<AdminCatalogManagement />} />
+        <Route path="/admin/sales" element={<AdminSalesMonitoring />} />  
+        <Route path="/admin/inventory" element={<AdminInventoryOverview />} />
       </Routes>
     </BrowserRouter>
   );

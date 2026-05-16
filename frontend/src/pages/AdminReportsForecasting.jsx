@@ -1,21 +1,13 @@
+import DashboardLayout from "../layouts/DashboardLayout";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     BarChart3,
-    Bell,
     Bot,
-    Boxes,
-    Building2,
-    FolderKanban,
-    HelpCircle,
-    LogOut,
+    ChevronRight,
     Package,
-    RefreshCcw,
     Send,
-    Settings,
-    ShoppingCart,
     TrendingUp,
-    Users,
     X,
 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -32,9 +24,9 @@ export default function AdminReportsForecasting() {
     const [inventory, setInventory] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    const [showUserMenu, setShowUserMenu] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showChat, setShowChat] = useState(false);
+    const [showForecastDrawer, setShowForecastDrawer] = useState(false);
     const [chatInput, setChatInput] = useState("");
 
     const [messages, setMessages] = useState([
@@ -81,7 +73,10 @@ export default function AdminReportsForecasting() {
             const inventoryData = await inventoryRes.json();
 
             setForecastData(Array.isArray(forecastJson.forecasts) ? forecastJson.forecasts : []);
-            setForecastModel(forecastJson.model || "Pandas + scikit-learn Linear Regression");
+            setForecastModel(
+                forecastJson.description ||
+                "Linear Regression and Prophet comparison using MAE and RMSE"
+            );
             setProducts(Array.isArray(productData) ? productData : []);
             setInventory(Array.isArray(inventoryData) ? inventoryData : []);
         } catch (error) {
@@ -92,15 +87,58 @@ export default function AdminReportsForecasting() {
         }
     };
 
-    const logout = () => {
-        localStorage.removeItem("user");
-        sessionStorage.removeItem("user");
-        navigate("/");
-    };
-
-    const formatCurrency = (amount) => `RM ${Number(amount || 0).toFixed(2)}`;
-
     const topForecastProduct = forecastData[0] || null;
+
+    const totalForecastQuantity = useMemo(() => {
+        return forecastData.reduce(
+            (sum, item) => sum + Number(item.forecast_quantity || 0),
+            0
+        );
+    }, [forecastData]);
+
+    const totalHistoricalQuantity = useMemo(() => {
+        return forecastData.reduce(
+            (sum, item) => sum + Number(item.total_quantity || 0),
+            0
+        );
+    }, [forecastData]);
+
+    const averageMae = useMemo(() => {
+        const values = forecastData
+            .map((item) => Number(item.mae))
+            .filter((value) => !Number.isNaN(value));
+
+        if (values.length === 0) return null;
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+    }, [forecastData]);
+
+    const averageRmse = useMemo(() => {
+        const values = forecastData
+            .map((item) => Number(item.rmse))
+            .filter((value) => !Number.isNaN(value));
+
+        if (values.length === 0) return null;
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+    }, [forecastData]);
+
+    const forecastGrowth = useMemo(() => {
+        if (!totalHistoricalQuantity) return 0;
+
+        return (
+            ((totalForecastQuantity - totalHistoricalQuantity) /
+                totalHistoricalQuantity) *
+            100
+        );
+    }, [totalForecastQuantity, totalHistoricalQuantity]);
+
+    const confidenceScore = useMemo(() => {
+        if (!averageRmse || !totalForecastQuantity) return null;
+
+        const score = 100 - (averageRmse / Math.max(totalForecastQuantity, 1)) * 100;
+        return Math.max(0, Math.min(100, score));
+    }, [averageRmse, totalForecastQuantity]);
+
+    const selectedModelSummary = topForecastProduct?.selected_model || "No Data";
 
     const slowMovingProducts = useMemo(() => {
         return [...forecastData]
@@ -141,7 +179,7 @@ export default function AdminReportsForecasting() {
                 return "There is not enough sales data to predict the top-selling product yet.";
             }
 
-            return `${topForecastProduct.product_name} is expected to be the top-selling product next month, with an estimated ${topForecastProduct.forecast_quantity} units sold. This prediction is generated using ${topForecastProduct.method}.`;
+            return `${topForecastProduct.product_name} is expected to be the top-selling product next month, with an estimated ${topForecastProduct.forecast_quantity} units sold. This prediction is generated using ${topForecastProduct.selected_model}.`;
         }
 
         if (q.includes("poor") || q.includes("not selling")) {
@@ -197,278 +235,269 @@ export default function AdminReportsForecasting() {
         setChatInput("");
     };
 
-    if (loading) {
-        return (
-            <div className="min-h-screen grid place-items-center bg-[#eef6fb] text-[#6f85a3]">
-                <div className="text-center">
-                    <TrendingUp size={42} className="mx-auto mb-3" />
-                    <p className="font-semibold">Loading Reports & Forecasting...</p>
-                </div>
-            </div>
-        );
-    }
+   
 
     return (
-        <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
-            <div className="grid h-full grid-cols-[250px_minmax(0,1fr)]">
-                <aside className="flex min-h-0 flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
-                    <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
-                        RetailPulse
-                    </div>
+        <>
+            <DashboardLayout
+                user={user}
+                title="Reports & Forecasting"
+                subtitle="Analyze product sales trends and estimate next-month demand."
+                modelText={forecastModel}
+                onRefresh={fetchData}
+                onOpenSettings={() => setShowSettings(true)}
+                onOpenChat={() => setShowChat(true)}
+            >
 
-                    <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
-                        <h4 className="font-extrabold text-[#16325b]">
-                            {user?.name || "System Admin"}
-                        </h4>
-                        <p className="mt-1 text-xs text-[#6f85a3]">
-                            Admin ID: {user?.user_id || "-"}
-                        </p>
-                    </div>
-
-                    <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
-                        <SidebarButton icon={BarChart3} label="Dashboard" onClick={() => navigate("/admin")} />
-                        <SidebarButton icon={Users} label="User Management" onClick={() => navigate("/admin/users")} />
-                        <SidebarButton icon={Building2} label="Branch Management" onClick={() => navigate("/admin/branches")} />
-                        <SidebarButton icon={FolderKanban} label="Catalog Management" onClick={() => navigate("/admin/catalog")} />
-                        <SidebarButton icon={Boxes} label="Inventory Overview" onClick={() => navigate("/admin/inventory")} />
-                        <SidebarButton icon={ShoppingCart} label="Sales Monitoring" onClick={() => navigate("/admin/sales")} />
-                        <SidebarButton active icon={TrendingUp} label="Reports & Forecasting" />
-                        <SidebarButton icon={Bot} label="AI Assistant" onClick={() => setShowChat(true)} />
-                    </nav>
-
-                    <div className="mt-4">
-                        <SidebarButton icon={HelpCircle} label="Help Support" />
-                    </div>
-                </aside>
-
-                <motion.main
-                    initial={{ opacity: 0, x: 30 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.35 }}
-                    className="min-w-0 overflow-y-auto px-8 py-6"
-                >
-                    <header className="mb-8 flex items-center gap-5">
-                        <div>
-                            <h1 className="text-3xl font-extrabold text-[#07102f]">
-                                Reports & Forecasting
-                            </h1>
-                            <p className="mt-1 text-sm text-[#6f85a3]">
-                                Analyze product sales trends and estimate next-month demand.
-                            </p>
-                            <p className="mt-1 text-xs font-bold text-[#1e4db7]">
-                                Model: {forecastModel}
-                            </p>
+                {loading ? (
+                    <div className="grid min-h-[70vh] place-items-center text-[#6f85a3]">
+                        <div className="text-center">
+                            <TrendingUp size={42} className="mx-auto mb-3" />
+                            <p className="font-semibold">Loading forecasting data...</p>
                         </div>
+                    </div>
+                ) : (
+                    <>
+                            <section className="mb-6 rounded-3xl bg-gradient-to-br from-[#07102f] via-[#0c2f73] to-[#1e4db7] p-7 text-white shadow-xl">
+                                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr]">
+                                    <div>
+                                        <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-xs font-bold uppercase tracking-widest">
+                                            <Bot size={15} />
+                                            Predictive Forecast Engine
+                                        </div>
 
-                        <div className="relative ml-auto flex items-center gap-3">
-                            <button
-                                onClick={fetchData}
-                                className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
-                            >
-                                <RefreshCcw size={18} />
-                            </button>
+                                        <h2 className="text-3xl font-extrabold">
+                                            Next-Month Sales Prediction
+                                        </h2>
 
-                            <button className="grid h-11 w-11 place-items-center rounded-full bg-white shadow">
-                                <Bell size={18} />
-                            </button>
+                                        <p className="mt-3 max-w-3xl text-sm leading-6 text-blue-100">
+                                            The system compares Linear Regression and Prophet using MAE and RMSE,
+                                            then selects the model with the lowest RMSE to generate the final forecast.
+                                        </p>
 
-                            <button
-                                onClick={() => setShowSettings(true)}
-                                className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
-                            >
-                                <Settings size={18} />
-                            </button>
+                                        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                                            <HeroMetric
+                                                label="Predicted Top Seller"
+                                                value={topForecastProduct?.product_name || "No Data"}
+                                            />
 
-                            <button
-                                onClick={() => setShowUserMenu(!showUserMenu)}
-                                className="grid h-11 w-11 place-items-center rounded-full bg-[#0d2d6c] font-bold text-white shadow"
-                            >
-                                {user?.name?.charAt(0)?.toUpperCase() || "A"}
-                            </button>
+                                            <HeroMetric
+                                                label="Total Forecast Units"
+                                                value={totalForecastQuantity}
+                                            />
 
-                            {showUserMenu && (
-                                <div className="absolute right-0 top-14 z-50 w-48 rounded-2xl bg-white p-3 shadow-xl">
+                                            <HeroMetric
+                                                label="Selected Model"
+                                                value={selectedModelSummary}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="rounded-3xl bg-white/12 p-5 backdrop-blur">
+                                        <p className="text-sm font-bold text-blue-100">
+                                            Forecast Confidence
+                                        </p>
+
+                                        <h3 className="mt-3 text-5xl font-extrabold">
+                                            {confidenceScore !== null ? `${confidenceScore.toFixed(1)}%` : "-"}
+                                        </h3>
+
+                                        <p className="mt-3 text-sm text-blue-100">
+                                            Based on average RMSE compared with total forecast quantity.
+                                        </p>
+
+                                        <div className="mt-5 h-3 overflow-hidden rounded-full bg-white/20">
+                                            <div
+                                                className="h-full rounded-full bg-white"
+                                                style={{
+                                                    width: `${confidenceScore !== null ? confidenceScore : 0}%`,
+                                                }}
+                                            />
+                                        </div>
+
+                                        <div className="mt-5 rounded-2xl bg-white/10 p-4">
+                                            <p className="text-xs font-bold uppercase tracking-widest text-blue-100">
+                                                Forecast Growth
+                                            </p>
+
+                                            <p
+                                                className={`mt-2 text-2xl font-extrabold ${forecastGrowth >= 0 ? "text-emerald-200" : "text-red-200"
+                                                    }`}
+                                            >
+                                                {forecastGrowth >= 0 ? "+" : ""}
+                                                {forecastGrowth.toFixed(1)}%
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section className="mb-6 grid grid-cols-1 gap-5 xl:grid-cols-6">
+                                <SummaryCard
+                                    title="Forecast Top Seller"
+                                    value={topForecastProduct?.product_name || "No Data"}
+                                    icon={Package}
+                                    color="text-[#1e4db7]"
+                                />
+
+                                <SummaryCard
+                                    title="Forecast Quantity"
+                                    value={topForecastProduct?.forecast_quantity || 0}
+                                    icon={TrendingUp}
+                                    color="text-green-600"
+                                />
+
+                                <SummaryCard
+                                    title="Selected Model"
+                                    value={topForecastProduct?.selected_model || "No Data"}
+                                    icon={Bot}
+                                    color="text-purple-600"
+                                />
+
+                                <SummaryCard
+                                    title="Average MAE"
+                                    value={averageMae !== null ? averageMae.toFixed(2) : "-"}
+                                    icon={BarChart3}
+                                    color="text-orange-600"
+                                />
+
+                                <SummaryCard
+                                    title="Average RMSE"
+                                    value={averageRmse !== null ? averageRmse.toFixed(2) : "-"}
+                                    icon={BarChart3}
+                                    color="text-red-600"
+                                />
+
+                                <SummaryCard
+                                    title="Low Stock Items"
+                                    value={lowStockItems.length}
+                                    icon={BarChart3}
+                                    color="text-red-600"
+                                />
+                            </section>
+
+                            <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+                                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div>
+                                            <h2 className="text-xl font-extrabold text-[#07102f]">
+                                                Forecast Ranking
+                                            </h2>
+                                            <p className="mt-1 text-sm text-[#6f85a3]">
+                                                Prediction compares Linear Regression and Prophet using MAE and RMSE.
+                                            </p>
+                                        </div>
+
+                                        <button
+                                            onClick={() => setShowForecastDrawer(true)}
+                                            className="flex items-center gap-2 rounded-2xl bg-[#0c2f73] px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-[#103986]"
+                                        >
+                                            View Details
+                                            <ChevronRight size={18} />
+                                        </button>
+                                    </div>
+
+                                    <div className="mt-6 space-y-4">
+                                        {forecastData.slice(0, 8).map((item) => {
+                                            const maxForecast = Math.max(
+                                                ...forecastData.map((p) => Number(p.forecast_quantity || 0)),
+                                                1
+                                            );
+                                            const width = `${(Number(item.forecast_quantity || 0) / maxForecast) * 100}%`;
+
+                                            return (
+                                                <div key={item.product_id}>
+                                                    <div className="mb-2 flex items-center justify-between text-sm">
+                                                        <div className="font-extrabold text-[#17325c]">
+                                                            {item.product_name}
+                                                        </div>
+                                                        <div className="font-bold text-[#6f85a3]">
+                                                            {item.forecast_quantity} units
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="h-3 overflow-hidden rounded-full bg-[#eef6fb]">
+                                                        <div
+                                                            className="h-full rounded-full bg-[#1e4db7]"
+                                                            style={{ width }}
+                                                        />
+                                                    </div>
+
+                                                    <div className="mt-1 flex items-center justify-between text-xs font-semibold text-[#6f85a3]">
+                                                        <span>{item.selected_model || "-"}</span>
+                                                        <span>RMSE: {item.rmse ?? "-"}</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+
+                                        {forecastData.length === 0 && (
+                                            <EmptyBox text="No forecast data available. Check sales history and backend API." />
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl bg-white p-6 shadow-sm">
+                                    <h2 className="text-xl font-extrabold text-[#07102f]">
+                                        Forecast Assistant Summary
+                                    </h2>
+
+                                    <p className="mt-1 text-sm text-[#6f85a3]">
+                                        Business insight generated from forecast and stock data.
+                                    </p>
+
+                                    <div className="mt-5 rounded-2xl bg-[#f8fcff] p-5">
+                                        <p className="font-bold text-[#17325c]">
+                                            {topForecastProduct
+                                                ? `${topForecastProduct.product_name} is expected to have the highest demand next month.`
+                                                : "More sales data is needed before a forecast can be generated."}
+                                        </p>
+
+                                        <p className="mt-3 text-sm leading-6 text-[#6f85a3]">
+                                            Selected model:{" "}
+                                            <span className="font-bold text-[#1e4db7]">
+                                                {topForecastProduct?.selected_model || "-"}
+                                            </span>
+                                            . The final forecast is generated by the model with the lower RMSE.
+                                        </p>
+                                    </div>
+
+                                    <div className="mt-5 grid grid-cols-2 gap-3">
+                                        <MiniMetric
+                                            label="Average MAE"
+                                            value={averageMae !== null ? averageMae.toFixed(2) : "-"}
+                                        />
+                                        <MiniMetric
+                                            label="Average RMSE"
+                                            value={averageRmse !== null ? averageRmse.toFixed(2) : "-"}
+                                        />
+                                    </div>
+
                                     <button
-                                        onClick={() => navigate("/user-profile")}
-                                        className="w-full rounded-xl px-4 py-3 text-left text-sm font-bold text-[#17325c] hover:bg-[#eef6fb]"
+                                        onClick={() => setShowChat(true)}
+                                        className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0c2f73] py-4 font-extrabold text-white hover:bg-[#103986]"
                                     >
-                                        User Profile
-                                    </button>
-
-                                    <button
-                                        onClick={logout}
-                                        className="flex w-full items-center gap-2 rounded-xl px-4 py-3 text-left text-sm font-bold text-red-500 hover:bg-red-50"
-                                    >
-                                        <LogOut size={16} />
-                                        Logout
+                                        <Bot size={18} />
+                                        Open AI Forecast Assistant
                                     </button>
                                 </div>
-                            )}
-                        </div>
-                    </header>
+                            </section>
 
-                    <section className="mb-6 grid grid-cols-1 gap-5 xl:grid-cols-4">
-                        <SummaryCard
-                            title="Forecast Top Seller"
-                            value={topForecastProduct?.product_name || "No Data"}
-                            icon={Package}
-                            color="text-[#1e4db7]"
-                        />
-                        <SummaryCard
-                            title="Forecast Quantity"
-                            value={topForecastProduct?.forecast_quantity || 0}
-                            icon={TrendingUp}
-                            color="text-green-600"
-                        />
-                        <SummaryCard
-                            title="Slow-Moving Products"
-                            value={slowMovingProducts.length}
-                            icon={Boxes}
-                            color="text-orange-600"
-                        />
-                        <SummaryCard
-                            title="Low Stock Items"
-                            value={lowStockItems.length}
-                            icon={Bell}
-                            color="text-red-600"
-                        />
-                    </section>
+                            <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+                                <ForecastTable title="Top Selling Products" data={topSellingProducts} />
+                                <ForecastTable title="Slow Moving Products" data={slowMovingProducts} />
+                            </section>
+                    </>
+                )}
+            </DashboardLayout>
 
-                    <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-                        <div className="rounded-2xl bg-white p-6 shadow-sm">
-                            <h2 className="text-xl font-extrabold text-[#07102f]">
-                                Forecast Ranking
-                            </h2>
-                            <p className="mt-1 text-sm text-[#6f85a3]">
-                                Prediction uses Pandas and scikit-learn Linear Regression from backend data.
-                            </p>
-
-                            <div className="mt-6 space-y-4">
-                                {forecastData.slice(0, 8).map((item) => {
-                                    const maxForecast = Math.max(
-                                        ...forecastData.map((p) => Number(p.forecast_quantity || 0)),
-                                        1
-                                    );
-                                    const width = `${(Number(item.forecast_quantity || 0) / maxForecast) * 100}%`;
-
-                                    return (
-                                        <div key={item.product_id}>
-                                            <div className="mb-2 flex items-center justify-between text-sm">
-                                                <div className="font-extrabold text-[#17325c]">
-                                                    {item.product_name}
-                                                </div>
-                                                <div className="font-bold text-[#6f85a3]">
-                                                    {item.forecast_quantity} units
-                                                </div>
-                                            </div>
-
-                                            <div className="h-3 overflow-hidden rounded-full bg-[#eef6fb]">
-                                                <div
-                                                    className="h-full rounded-full bg-[#1e4db7]"
-                                                    style={{ width }}
-                                                />
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-
-                                {forecastData.length === 0 && (
-                                    <EmptyBox text="No forecast data available. Check sales history and backend API." />
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="rounded-2xl bg-white p-6 shadow-sm">
-                            <h2 className="text-xl font-extrabold text-[#07102f]">
-                                Forecast Assistant Summary
-                            </h2>
-                            <p className="mt-1 text-sm text-[#6f85a3]">
-                                Business insight generated from forecast and stock data.
-                            </p>
-
-                            <div className="mt-5 rounded-2xl bg-[#f8fcff] p-5">
-                                <p className="font-bold text-[#17325c]">
-                                    {topForecastProduct
-                                        ? `${topForecastProduct.product_name} is expected to have the highest demand next month.`
-                                        : "More sales data is needed before a forecast can be generated."}
-                                </p>
-
-                                <p className="mt-3 text-sm leading-6 text-[#6f85a3]">
-                                    This forecast is generated by the backend using Pandas for data preparation and scikit-learn Linear Regression for prediction.
-                                </p>
-                            </div>
-
-                            <button
-                                onClick={() => setShowChat(true)}
-                                className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0c2f73] py-4 font-extrabold text-white hover:bg-[#103986]"
-                            >
-                                <Bot size={18} />
-                                Open AI Forecast Assistant
-                            </button>
-                        </div>
-                    </section>
-
-                    <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-                        <ForecastTable title="Top Selling Products" data={topSellingProducts} />
-                        <ForecastTable title="Slow Moving Products" data={slowMovingProducts} />
-                    </section>
-
-                    <section className="rounded-2xl bg-white p-6 shadow-sm">
-                        <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                            Forecast Details
-                        </h2>
-
-                        <div className="overflow-hidden rounded-2xl border border-blue-50">
-                            <table className="w-full text-left text-sm">
-                                <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
-                                    <tr>
-                                        <th className="px-4 py-3">Product</th>
-                                        <th className="px-4 py-3">Total Sold</th>
-                                        <th className="px-4 py-3">Total Revenue</th>
-                                        <th className="px-4 py-3">Forecast Qty</th>
-                                        <th className="px-4 py-3">Trend</th>
-                                        <th className="px-4 py-3">Method</th>
-                                    </tr>
-                                </thead>
-
-                                <tbody>
-                                    {forecastData.map((item) => (
-                                        <tr key={item.product_id} className="border-t">
-                                            <td className="px-4 py-4 font-bold">{item.product_name}</td>
-                                            <td className="px-4 py-4">{item.total_quantity}</td>
-                                            <td className="px-4 py-4 font-bold text-green-600">
-                                                {formatCurrency(item.total_revenue)}
-                                            </td>
-                                            <td className="px-4 py-4 font-bold text-[#1e4db7]">
-                                                {item.forecast_quantity}
-                                            </td>
-                                            <td className="px-4 py-4">
-                                                <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-[#1e4db7]">
-                                                    {item.trend}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-4 text-xs font-semibold text-[#6f85a3]">
-                                                {item.method}
-                                            </td>
-                                        </tr>
-                                    ))}
-
-                                    {forecastData.length === 0 && (
-                                        <tr>
-                                            <td
-                                                colSpan="6"
-                                                className="px-4 py-6 text-center font-semibold text-[#6f85a3]"
-                                            >
-                                                No forecast data found.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </section>
-                </motion.main>
-            </div>
+            <button
+                onClick={() => setShowForecastDrawer(true)}
+                className="fixed right-0 top-1/2 z-40 flex h-24 w-11 -translate-y-1/2 items-center justify-center rounded-l-2xl bg-[#0c2f73] text-white shadow-2xl hover:bg-[#103986]"
+                title="Open forecast details"
+            >
+                <ChevronRight size={28} />
+            </button>
 
             <button
                 onClick={() => setShowChat(true)}
@@ -476,6 +505,157 @@ export default function AdminReportsForecasting() {
             >
                 <Bot size={30} />
             </button>
+
+            {showForecastDrawer && (
+                <div className="fixed inset-0 z-50 bg-black/30">
+                    <motion.div
+                        initial={{ x: "100%" }}
+                        animate={{ x: 0 }}
+                        exit={{ x: "100%" }}
+                        transition={{ duration: 0.3 }}
+                        className="absolute right-0 top-0 h-full w-[760px] max-w-[92vw] overflow-y-auto bg-white shadow-2xl"
+                    >
+                        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-7 py-5">
+                            <div>
+                                <h2 className="text-2xl font-extrabold text-[#07102f]">
+                                    Forecast Breakdown
+                                </h2>
+                                <p className="mt-1 text-sm font-semibold text-[#6f85a3]">
+                                    Model comparison, MAE/RMSE and product-level forecast details.
+                                </p>
+                            </div>
+
+                            <button
+                                onClick={() => setShowForecastDrawer(false)}
+                                className="grid h-10 w-10 place-items-center rounded-full bg-[#eef6fb] text-[#17325c]"
+                            >
+                                <X size={22} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-6 p-7">
+                            <section className="rounded-3xl bg-[#07102f] p-6 text-white">
+                                <p className="text-xs font-bold uppercase tracking-widest text-blue-100">
+                                    Selected Forecast Result
+                                </p>
+
+                                <h3 className="mt-3 text-3xl font-extrabold">
+                                    {topForecastProduct?.product_name || "No Data"}
+                                </h3>
+
+                                <div className="mt-5 grid grid-cols-2 gap-4">
+                                    <DrawerMetric
+                                        label="Forecast Quantity"
+                                        value={topForecastProduct?.forecast_quantity || 0}
+                                    />
+                                    <DrawerMetric
+                                        label="Selected Model"
+                                        value={topForecastProduct?.selected_model || "-"}
+                                    />
+                                    <DrawerMetric
+                                        label="MAE"
+                                        value={topForecastProduct?.mae ?? "-"}
+                                    />
+                                    <DrawerMetric
+                                        label="RMSE"
+                                        value={topForecastProduct?.rmse ?? "-"}
+                                    />
+                                </div>
+                            </section>
+
+                            <section className="rounded-3xl bg-[#f8fcff] p-6">
+                                <h3 className="text-xl font-extrabold text-[#07102f]">
+                                    Model Comparison
+                                </h3>
+
+                                <p className="mt-1 text-sm text-[#6f85a3]">
+                                    The backend compares Linear Regression and Prophet. The lower RMSE model is used for the final forecast.
+                                </p>
+
+                                <div className="mt-5 overflow-hidden rounded-2xl border border-blue-100">
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
+                                            <tr>
+                                                <th className="px-4 py-3">Model</th>
+                                                <th className="px-4 py-3">Forecast</th>
+                                                <th className="px-4 py-3">MAE</th>
+                                                <th className="px-4 py-3">RMSE</th>
+                                            </tr>
+                                        </thead>
+
+                                        <tbody>
+                                            {(topForecastProduct?.model_comparison || []).map((model) => (
+                                                <tr key={model.model} className="border-t bg-white">
+                                                    <td className="px-4 py-4 font-bold text-[#17325c]">
+                                                        {model.model}
+                                                    </td>
+                                                    <td className="px-4 py-4">{model.forecast_quantity}</td>
+                                                    <td className="px-4 py-4">{model.mae}</td>
+                                                    <td className="px-4 py-4 font-bold text-[#1e4db7]">
+                                                        {model.rmse}
+                                                    </td>
+                                                </tr>
+                                            ))}
+
+                                            {(!topForecastProduct?.model_comparison ||
+                                                topForecastProduct.model_comparison.length === 0) && (
+                                                    <tr>
+                                                        <td
+                                                            colSpan="4"
+                                                            className="px-4 py-6 text-center font-semibold text-[#6f85a3]"
+                                                        >
+                                                            No model comparison available.
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <section className="rounded-3xl bg-white p-6 shadow-sm">
+                                <h3 className="text-xl font-extrabold text-[#07102f]">
+                                    Product Forecast Details
+                                </h3>
+
+                                <div className="mt-5 overflow-hidden rounded-2xl border border-blue-100">
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
+                                            <tr>
+                                                <th className="px-4 py-3">Product</th>
+                                                <th className="px-4 py-3">Sold</th>
+                                                <th className="px-4 py-3">Forecast</th>
+                                                <th className="px-4 py-3">Model</th>
+                                                <th className="px-4 py-3">RMSE</th>
+                                            </tr>
+                                        </thead>
+
+                                        <tbody>
+                                            {forecastData.map((item) => (
+                                                <tr key={item.product_id} className="border-t">
+                                                    <td className="px-4 py-4 font-bold text-[#17325c]">
+                                                        {item.product_name}
+                                                    </td>
+                                                    <td className="px-4 py-4">{item.total_quantity}</td>
+                                                    <td className="px-4 py-4 font-bold text-[#1e4db7]">
+                                                        {item.forecast_quantity}
+                                                    </td>
+                                                    <td className="px-4 py-4 text-xs font-semibold text-[#6f85a3]">
+                                                        {item.selected_model || "-"}
+                                                    </td>
+                                                    <td className="px-4 py-4 text-xs font-bold text-[#6f85a3]">
+                                                        {item.rmse ?? "-"}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
 
             {showChat && (
                 <div className="fixed inset-0 z-50 bg-black/40">
@@ -538,7 +718,8 @@ export default function AdminReportsForecasting() {
                                 {messages.map((msg, index) => (
                                     <div
                                         key={index}
-                                        className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+                                        className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"
+                                            }`}
                                     >
                                         <div
                                             className={`max-w-[78%] rounded-2xl px-5 py-4 text-sm leading-6 ${msg.sender === "user"
@@ -585,23 +766,47 @@ export default function AdminReportsForecasting() {
                     </p>
                 </SimpleModal>
             )}
+        </>
+    );
+}
+
+function HeroMetric({ label, value }) {
+    return (
+        <div className="rounded-2xl bg-white/12 p-5 backdrop-blur">
+            <p className="text-xs font-bold uppercase tracking-widest text-blue-100">
+                {label}
+            </p>
+
+            <h3 className="mt-3 truncate text-2xl font-extrabold text-white">
+                {value}
+            </h3>
         </div>
     );
 }
 
-function SidebarButton({ icon: Icon, label, active, onClick }) {
+function MiniMetric({ label, value }) {
     return (
-        <button
-            onClick={onClick}
-            title={label}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-4 text-left transition ${active
-                    ? "bg-white font-bold text-[#1e4db7] shadow"
-                    : "bg-white/30 font-semibold text-[#254e7a] hover:bg-white/70"
-                }`}
-        >
-            <Icon size={18} className="shrink-0" />
-            <span className="min-w-0 truncate text-sm">{label}</span>
-        </button>
+        <div className="rounded-2xl bg-[#f8fcff] p-4">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                {label}
+            </p>
+            <p className="mt-2 text-xl font-extrabold text-[#1e4db7]">
+                {value}
+            </p>
+        </div>
+    );
+}
+
+function DrawerMetric({ label, value }) {
+    return (
+        <div className="rounded-2xl bg-white/10 p-4">
+            <p className="text-xs font-bold uppercase tracking-widest text-blue-100">
+                {label}
+            </p>
+            <p className="mt-2 truncate text-xl font-extrabold text-white">
+                {value}
+            </p>
+        </div>
     );
 }
 

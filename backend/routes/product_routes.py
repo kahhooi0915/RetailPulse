@@ -1,12 +1,10 @@
+import psycopg2
 from flask import Blueprint, request, jsonify
 from db import get_connection
 
 product_bp = Blueprint("product_bp", __name__)
 
 
-# =========================
-# ADMIN - GET ALL PRODUCTS
-# =========================
 @product_bp.route("/admin/products", methods=["GET"])
 def admin_get_products():
     try:
@@ -17,7 +15,8 @@ def admin_get_products():
             SELECT p.product_id, p.product_code, p.product_name,
                    p.category_id, c.category_name,
                    p.selling_price, p.reorder_level,
-                   p.status, p.description, p.product_image
+                   p.status, p.description,
+                   CASE WHEN p.product_image_data IS NOT NULL THEN TRUE ELSE FALSE END AS has_image
             FROM product p
             JOIN category c ON p.category_id = c.category_id
             ORDER BY p.product_id
@@ -37,12 +36,11 @@ def admin_get_products():
                 "reorder_level": row[6],
                 "status": row[7],
                 "description": row[8],
-                "product_image": row[9]
+                "has_image": row[9]
             })
 
         cur.close()
         conn.close()
-
         return jsonify(products), 200
 
     except Exception as e:
@@ -50,9 +48,6 @@ def admin_get_products():
         return jsonify({"message": str(e)}), 500
 
 
-# =========================
-# ADMIN - GET SINGLE PRODUCT
-# =========================
 @product_bp.route("/admin/products/<int:product_id>", methods=["GET"])
 def admin_get_single_product(product_id):
     try:
@@ -63,7 +58,8 @@ def admin_get_single_product(product_id):
             SELECT p.product_id, p.product_code, p.product_name,
                    p.category_id, c.category_name,
                    p.selling_price, p.reorder_level,
-                   p.status, p.description, p.product_image
+                   p.status, p.description,
+                   CASE WHEN p.product_image_data IS NOT NULL THEN TRUE ELSE FALSE END AS has_image
             FROM product p
             JOIN category c ON p.category_id = c.category_id
             WHERE p.product_id = %s
@@ -77,7 +73,7 @@ def admin_get_single_product(product_id):
         if not row:
             return jsonify({"message": "Product not found"}), 404
 
-        product = {
+        return jsonify({
             "product_id": row[0],
             "product_code": row[1],
             "product_name": row[2],
@@ -87,36 +83,29 @@ def admin_get_single_product(product_id):
             "reorder_level": row[6],
             "status": row[7],
             "description": row[8],
-            "product_image": row[9]
-        }
-
-        return jsonify(product), 200
+            "has_image": row[9]
+        }), 200
 
     except Exception as e:
         print("ERROR /admin/products/<id> GET:", e)
         return jsonify({"message": str(e)}), 500
 
 
-# =========================
-# ADMIN - ADD PRODUCT
-# =========================
 @product_bp.route("/admin/products", methods=["POST"])
 def admin_add_product():
     try:
-        data = request.get_json()
-
-        product_name = data.get("product_name")
-        category_id = data.get("category_id")
-        selling_price = data.get("selling_price")
-        reorder_level = data.get("reorder_level")
-        status = data.get("status")
-        description = data.get("description")
-        product_image = data.get("product_image", "/static/images/products/default.webp")
+        product_name = request.form.get("product_name")
+        category_id = request.form.get("category_id")
+        selling_price = request.form.get("selling_price")
+        reorder_level = request.form.get("reorder_level")
+        status = request.form.get("status")
+        description = request.form.get("description")
+        image_file = request.files.get("product_image")
 
         if not product_name or not product_name.strip():
             return jsonify({"message": "Product name is required"}), 400
 
-        if category_id is None:
+        if not category_id:
             return jsonify({"message": "Category is required"}), 400
 
         if selling_price is None:
@@ -133,6 +122,16 @@ def admin_add_product():
 
         if int(reorder_level) < 0:
             return jsonify({"message": "Reorder level cannot be negative"}), 400
+
+        image_data = None
+        image_mime = None
+
+        if image_file and image_file.filename:
+            image_data = image_file.read()
+            image_mime = image_file.mimetype
+
+            if image_mime not in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                return jsonify({"message": "Only PNG, JPG, JPEG, and WEBP images are allowed"}), 400
 
         conn = get_connection()
         cur = conn.cursor()
@@ -156,9 +155,10 @@ def admin_add_product():
         cur.execute("""
             INSERT INTO product (
                 product_name, category_id, selling_price,
-                reorder_level, status, description, product_image
+                reorder_level, status, description,
+                product_image_data, product_image_mime
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING product_id, product_code
         """, (
             product_name.strip(),
@@ -167,7 +167,8 @@ def admin_add_product():
             reorder_level,
             status,
             description,
-            product_image
+            psycopg2.Binary(image_data) if image_data else None,
+            image_mime
         ))
 
         new_product = cur.fetchone()
@@ -187,26 +188,21 @@ def admin_add_product():
         return jsonify({"message": str(e)}), 500
 
 
-# =========================
-# ADMIN - UPDATE PRODUCT
-# =========================
 @product_bp.route("/admin/products/<int:product_id>", methods=["PUT"])
 def admin_update_product(product_id):
     try:
-        data = request.get_json()
-
-        product_name = data.get("product_name")
-        category_id = data.get("category_id")
-        selling_price = data.get("selling_price")
-        reorder_level = data.get("reorder_level")
-        status = data.get("status")
-        description = data.get("description")
-        product_image = data.get("product_image", "/static/images/products/default.webp")
+        product_name = request.form.get("product_name")
+        category_id = request.form.get("category_id")
+        selling_price = request.form.get("selling_price")
+        reorder_level = request.form.get("reorder_level")
+        status = request.form.get("status")
+        description = request.form.get("description")
+        image_file = request.files.get("product_image")
 
         if not product_name or not product_name.strip():
             return jsonify({"message": "Product name is required"}), 400
 
-        if category_id is None:
+        if not category_id:
             return jsonify({"message": "Category is required"}), 400
 
         if selling_price is None:
@@ -250,26 +246,56 @@ def admin_update_product(product_id):
             conn.close()
             return jsonify({"message": "Product name already exists"}), 400
 
-        cur.execute("""
-            UPDATE product
-            SET product_name = %s,
-                category_id = %s,
-                selling_price = %s,
-                reorder_level = %s,
-                status = %s,
-                description = %s,
-                product_image = %s
-            WHERE product_id = %s
-        """, (
-            product_name.strip(),
-            category_id,
-            selling_price,
-            reorder_level,
-            status,
-            description,
-            product_image,
-            product_id
-        ))
+        if image_file and image_file.filename:
+            image_data = image_file.read()
+            image_mime = image_file.mimetype
+
+            if image_mime not in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                cur.close()
+                conn.close()
+                return jsonify({"message": "Only PNG, JPG, JPEG, and WEBP images are allowed"}), 400
+
+            cur.execute("""
+                UPDATE product
+                SET product_name = %s,
+                    category_id = %s,
+                    selling_price = %s,
+                    reorder_level = %s,
+                    status = %s,
+                    description = %s,
+                    product_image_data = %s,
+                    product_image_mime = %s
+                WHERE product_id = %s
+            """, (
+                product_name.strip(),
+                category_id,
+                selling_price,
+                reorder_level,
+                status,
+                description,
+                psycopg2.Binary(image_data),
+                image_mime,
+                product_id
+            ))
+        else:
+            cur.execute("""
+                UPDATE product
+                SET product_name = %s,
+                    category_id = %s,
+                    selling_price = %s,
+                    reorder_level = %s,
+                    status = %s,
+                    description = %s
+                WHERE product_id = %s
+            """, (
+                product_name.strip(),
+                category_id,
+                selling_price,
+                reorder_level,
+                status,
+                description,
+                product_id
+            ))
 
         conn.commit()
         cur.close()
@@ -282,9 +308,35 @@ def admin_update_product(product_id):
         return jsonify({"message": str(e)}), 500
 
 
-# =========================
-# ADMIN - DELETE PRODUCT
-# =========================
+@product_bp.route("/admin/products/<int:product_id>/image", methods=["GET"])
+def admin_get_product_image(product_id):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT product_image_data, product_image_mime
+            FROM product
+            WHERE product_id = %s
+        """, (product_id,))
+
+        row = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        if not row or not row[0]:
+            return jsonify({"message": "Image not found"}), 404
+
+        return bytes(row[0]), 200, {
+            "Content-Type": row[1] or "image/jpeg"
+        }
+
+    except Exception as e:
+        print("ERROR /admin/products/<id>/image:", e)
+        return jsonify({"message": str(e)}), 500
+
+
 @product_bp.route("/admin/products/<int:product_id>", methods=["DELETE"])
 def admin_delete_product(product_id):
     try:
@@ -305,8 +357,7 @@ def admin_delete_product(product_id):
 
         return jsonify({"message": "Product deleted successfully"}), 200
 
-    except Exception as e:
-        print("ERROR /admin/products DELETE:", e)
+    except Exception:
         return jsonify({
             "message": "Cannot delete product. It may still be used by inventory, sale details, or transfer details."
         }), 400
