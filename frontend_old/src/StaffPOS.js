@@ -32,7 +32,7 @@ function StaffPOS() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const savedUser = JSON.parse(localStorage.getItem("user"));
+    const savedUser = JSON.parse(sessionStorage.getItem("user"));
     setUser(savedUser);
 
     if (!savedUser) {
@@ -216,7 +216,7 @@ function StaffPOS() {
   };
 
   const logout = () => {
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
     window.location.href = "/";
   };
 

@@ -4,7 +4,7 @@ import DashboardLayout from "../layouts/DashboardLayout";
 const API = "http://localhost:5000";
 
 export default function InventoryOverview() {
-    const user = JSON.parse(localStorage.getItem("user")) || {};
+    const user = JSON.parse(sessionStorage.getItem("user")) || {};
     const [inventory, setInventory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");

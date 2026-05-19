@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Mail, Lock, ShieldCheck } from "lucide-react";
 import api from "../api/axios";
+import setFavicon from "../utils/setFavicon";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -20,7 +21,9 @@ export default function Login() {
       const res = await api.post("/login", { email, password });
       const user = res.data;
 
-      localStorage.setItem("user", JSON.stringify(user));
+      sessionStorage.setItem("user", JSON.stringify(user));
+
+      setFavicon(user.role);
 
       setSuccess(true);
 

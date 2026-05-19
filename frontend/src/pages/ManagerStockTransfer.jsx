@@ -33,7 +33,7 @@ export default function ManagerStockTransfer() {
 
     useEffect(() => {
         const savedUser =
-            JSON.parse(localStorage.getItem("user")) ||
+            JSON.parse(sessionStorage.getItem("user")) ||
             JSON.parse(sessionStorage.getItem("user"));
 
         if (!savedUser) {
@@ -212,7 +212,7 @@ export default function ManagerStockTransfer() {
     };
 
     const logout = () => {
-        localStorage.removeItem("user");
+        sessionStorage.removeItem("user");
         sessionStorage.removeItem("user");
         navigate("/");
     };

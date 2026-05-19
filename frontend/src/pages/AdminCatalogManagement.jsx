@@ -65,7 +65,7 @@ export default function AdminCatalogManagement() {
     const [showSettings, setShowSettings] = useState(false);
 
     const [settingsData, setSettingsData] = useState(() => {
-        const savedSettings = localStorage.getItem("adminSettings");
+        const savedSettings = sessionStorage.getItem("adminSettings");
 
         return savedSettings
             ? JSON.parse(savedSettings)
@@ -80,7 +80,7 @@ export default function AdminCatalogManagement() {
 
     useEffect(() => {
         const savedUser =
-            JSON.parse(localStorage.getItem("user")) ||
+            JSON.parse(sessionStorage.getItem("user")) ||
             JSON.parse(sessionStorage.getItem("user"));
 
         if (!savedUser) {
@@ -660,7 +660,7 @@ export default function AdminCatalogManagement() {
 
                         <button
                             onClick={() => {
-                                localStorage.setItem("adminSettings", JSON.stringify(settingsData));
+                                sessionStorage.setItem("adminSettings", JSON.stringify(settingsData));
                                 setShowSettings(false);
                                 showToast("Settings saved successfully.");
                             }}

@@ -4,7 +4,7 @@ import DashboardLayout from "../layouts/DashboardLayout";
 const API = "http://localhost:5000";
 
 export default function SalesMonitoring() {
-    const user = JSON.parse(localStorage.getItem("user")) || {};
+    const user = JSON.parse(sessionStorage.getItem("user")) || {};
     const [sales, setSales] = useState([]);
     const [details, setDetails] = useState([]);
     const [loading, setLoading] = useState(true);

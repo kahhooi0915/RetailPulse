@@ -25,7 +25,7 @@ export default function DashboardLayout({
     const [showUserMenu, setShowUserMenu] = useState(false);
 
     const logout = () => {
-        localStorage.removeItem("user");
+        sessionStorage.removeItem("user");
         sessionStorage.removeItem("user");
         navigate("/");
     };

@@ -46,7 +46,7 @@ export default function UserProfile() {
 
   useEffect(() => {
     const savedUser =
-      JSON.parse(localStorage.getItem("user")) ||
+      JSON.parse(sessionStorage.getItem("user")) ||
       JSON.parse(sessionStorage.getItem("user"));
 
     if (!savedUser) {
@@ -164,7 +164,7 @@ export default function UserProfile() {
         phone: form.phone,
       };
 
-      localStorage.setItem("user", JSON.stringify(updatedUser));
+      sessionStorage.setItem("user", JSON.stringify(updatedUser));
       setUser(updatedUser);
 
       alert("Profile updated successfully.");
@@ -177,7 +177,7 @@ export default function UserProfile() {
   };
 
   const logout = () => {
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
     sessionStorage.removeItem("user");
     navigate("/");
   };

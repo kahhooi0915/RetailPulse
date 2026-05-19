@@ -46,7 +46,7 @@ export default function AdminReportsForecasting() {
 
     useEffect(() => {
         const savedUser =
-            JSON.parse(localStorage.getItem("user")) ||
+            JSON.parse(sessionStorage.getItem("user")) ||
             JSON.parse(sessionStorage.getItem("user"));
 
         if (!savedUser) {

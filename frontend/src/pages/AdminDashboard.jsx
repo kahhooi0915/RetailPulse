@@ -55,7 +55,7 @@ export default function AdminDashboard() {
   const sidebarOpen = sidebarPinned || sidebarHovered;
 
   const [settingsData, setSettingsData] = useState(() => {
-    const savedSettings = localStorage.getItem("adminSettings");
+    const savedSettings = sessionStorage.getItem("adminSettings");
 
     return savedSettings
       ? JSON.parse(savedSettings)
@@ -69,12 +69,12 @@ export default function AdminDashboard() {
   });
 
   const [notificationRead, setNotificationRead] = useState(() => {
-    return localStorage.getItem("adminNotificationRead") === "true";
+    return sessionStorage.getItem("adminNotificationRead") === "true";
   });
 
   useEffect(() => {
     const savedUser =
-      JSON.parse(localStorage.getItem("user")) ||
+      JSON.parse(sessionStorage.getItem("user")) ||
       JSON.parse(sessionStorage.getItem("user"));
 
     if (!savedUser) {
@@ -133,7 +133,7 @@ export default function AdminDashboard() {
   const refreshData = () => loadData();
 
   const logout = () => {
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
     sessionStorage.removeItem("user");
     navigate("/");
   };
@@ -159,13 +159,13 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const previousCount = Number(
-      localStorage.getItem("adminLowStockCount") || 0
+      sessionStorage.getItem("adminLowStockCount") || 0
     );
 
     if (lowStockItems.length !== previousCount) {
       setNotificationRead(false);
-      localStorage.setItem("adminNotificationRead", "false");
-      localStorage.setItem("adminLowStockCount", String(lowStockItems.length));
+      sessionStorage.setItem("adminNotificationRead", "false");
+      sessionStorage.setItem("adminLowStockCount", String(lowStockItems.length));
     }
   }, [lowStockItems.length]);
 
@@ -337,7 +337,7 @@ export default function AdminDashboard() {
                 onClick={() => {
                   setShowNotifications(true);
                   setNotificationRead(true);
-                  localStorage.setItem("adminNotificationRead", "true");
+                  sessionStorage.setItem("adminNotificationRead", "true");
                 }}
                 className="relative grid h-11 w-11 place-items-center rounded-full bg-white shadow"
               >
@@ -763,7 +763,7 @@ export default function AdminDashboard() {
 
             <button
               onClick={() => {
-                localStorage.setItem("adminSettings", JSON.stringify(settingsData));
+                sessionStorage.setItem("adminSettings", JSON.stringify(settingsData));
                 setShowSettings(false);
                 alert("Settings saved successfully.");
               }}

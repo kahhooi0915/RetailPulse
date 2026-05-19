@@ -53,28 +53,30 @@ export default function Staff() {
   const [completedSale, setCompletedSale] = useState(null);
   const [showEmailPopup, setShowEmailPopup] = useState(false);
   const [customerEmail, setCustomerEmail] = useState("");
+  const [sidebarHovered, setSidebarHovered] = useState(false); // hover-expand sidebar
+  const sidebarOpen = sidebarHovered;
   //Settings section states
   const [showSettings, setShowSettings] = useState(false);
   const [taxRate, setTaxRate] = useState(
-    Number(localStorage.getItem("taxRate") || 0)
+    Number(sessionStorage.getItem("taxRate") || 0)
   );
 
   const [terminalName, setTerminalName] = useState(
-    localStorage.getItem("terminalName") || "POS-01"
+    sessionStorage.getItem("terminalName") || "POS-01"
   );
 
   const [receiptFooter, setReceiptFooter] = useState(
-    localStorage.getItem("receiptFooter") || "Thank you for shopping with us!"
+    sessionStorage.getItem("receiptFooter") || "Thank you for shopping with us!"
   );
 
   const [eyeCareMode, setEyeCareMode] = useState(
-  localStorage.getItem("eyeCareMode") === "true"
+  sessionStorage.getItem("eyeCareMode") === "true"
   );
 
   //Store user information and fetch initial data on component mount
   useEffect(() => {
     const savedUser =
-      JSON.parse(localStorage.getItem("user")) ||
+      JSON.parse(sessionStorage.getItem("user")) ||
       JSON.parse(sessionStorage.getItem("user"));
 
     if (!savedUser) {
@@ -250,7 +252,7 @@ export default function Staff() {
   const total = discountedSubtotal + tax;
 
   const logout = () => {
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
     sessionStorage.removeItem("user");
     navigate("/");
   };
@@ -261,7 +263,7 @@ export default function Staff() {
     return;
   }
 
-  const holdOrders = JSON.parse(localStorage.getItem("holdOrders")) || [];
+  const holdOrders = JSON.parse(sessionStorage.getItem("holdOrders")) || [];
 
   const newOrder = {
     id: Date.now(),
@@ -275,7 +277,7 @@ export default function Staff() {
   };
 
   holdOrders.push(newOrder);
-  localStorage.setItem("holdOrders", JSON.stringify(holdOrders));
+  sessionStorage.setItem("holdOrders", JSON.stringify(holdOrders));
 
   setCart([]);
   setDiscountInput("");
@@ -284,7 +286,7 @@ export default function Staff() {
 };
 
     const resumeHoldOrder = (orderId) => {
-    const holdOrders = JSON.parse(localStorage.getItem("holdOrders")) || [];
+    const holdOrders = JSON.parse(sessionStorage.getItem("holdOrders")) || [];
 
     const selectedOrder = holdOrders.find((order) => order.id === orderId);
 
@@ -297,16 +299,16 @@ export default function Staff() {
     setDiscountInput(String(selectedOrder.discountPercent || ""));
 
     const updatedOrders = holdOrders.filter((order) => order.id !== orderId);
-    localStorage.setItem("holdOrders", JSON.stringify(updatedOrders));
+    sessionStorage.setItem("holdOrders", JSON.stringify(updatedOrders));
 
     setShowHoldList(false);
     };
 
     const deleteHoldOrder = (orderId) => {
-    const holdOrders = JSON.parse(localStorage.getItem("holdOrders")) || [];
+    const holdOrders = JSON.parse(sessionStorage.getItem("holdOrders")) || [];
     const updatedOrders = holdOrders.filter((order) => order.id !== orderId);
 
-    localStorage.setItem("holdOrders", JSON.stringify(updatedOrders));
+    sessionStorage.setItem("holdOrders", JSON.stringify(updatedOrders));
     setShowHoldList(false);
     setTimeout(() => setShowHoldList(true), 0);
     };
@@ -411,48 +413,76 @@ export default function Staff() {
                       : "bg-[#eef6fb] text-[#17325c]"
                   }`}
     >
-      <div className="grid h-full grid-cols-[230px_minmax(0,1fr)_330px]">
+      <div
+        className={`grid h-full transition-all duration-300 ${sidebarOpen
+            ? "grid-cols-[230px_minmax(0,1fr)_330px]"
+            : "grid-cols-[86px_minmax(0,1fr)_330px]"
+          }`}
+      >
 
         {/* SIDEBAR */}
-        <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
-          <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
-            RetailPulse
+        <aside
+          onMouseEnter={() => setSidebarHovered(true)}
+          onMouseLeave={() => setSidebarHovered(false)}
+          className={`flex flex-col bg-[#d9edf8] py-6 border-r border-blue-100 transition-all duration-300 ${sidebarOpen ? "px-5" : "px-3"
+            }`}
+        >
+          {/* Logo + Collapse Button */}
+          <div
+            className={`mb-8 flex items-center ${!sidebarOpen ? "justify-center" : "justify-between"
+              }`}
+          >
+            {!!sidebarOpen && (
+              <div className="text-2xl font-extrabold text-[#1e4db7]">
+                RetailPulse
+              </div>
+            )}
           </div>
 
-          <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
-            <h4 className="font-extrabold text-[#16325b]">
-              {user?.branch_name || "Main Branch"}
-            </h4>
-            <p className="mt-1 text-xs text-[#6f85a3]">
-              Staff ID: {user?.user_id}
-            </p>
-          </div>
+          {/* Branch Info */}
+          {!!sidebarOpen && (
+            <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
+              <h4 className="font-extrabold text-[#16325b]">
+                {user?.branch_name || "Main Branch"}
+              </h4>
+              <p className="mt-1 text-xs text-[#6f85a3]">
+                Staff ID: {user?.user_id}
+              </p>
+            </div>
+          )}
 
+          {/* Navigation */}
           <nav className="space-y-3">
-            <button className="flex w-full items-center gap-4 rounded-2xl bg-white px-4 py-4 font-bold text-[#1e4db7] shadow">
+            {/* POS Terminal */}
+            <button
+              className={`flex w-full items-center rounded-2xl bg-white py-4 font-bold text-[#1e4db7] shadow transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
+            >
               <ShoppingCart size={18} />
-              <span>POS Terminal</span>
+              {!!sidebarOpen && <span>POS Terminal</span>}
             </button>
 
+            {/* Analytics */}
             <button
               onClick={() => navigate("/staff-analytics")}
-              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 font-semibold text-[#254e7a] transition-all duration-300 hover:-translate-y-1 hover:bg-white/70 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
             >
               <BarChart3 size={18} />
-              <span>Analytics</span>
+              {!!sidebarOpen && <span>Analytics</span>}
             </button>
+          </nav>
 
-            </nav>
-
+          {/* Help Support */}
           <div className="mt-auto space-y-3">
             <button
-                onClick={() => setShowHelp(!showHelp)}
-                className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]"
-                >
-                <HelpCircle size={17} />
-                <span>Help Support</span>
-                </button>
-
+              onClick={() => setShowHelp(!showHelp)}
+              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 text-sm font-semibold text-[#254e7a] transition-all duration-300 hover:-translate-y-1 hover:bg-white/70 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
+            >
+              <HelpCircle size={17} />
+              {!!sidebarOpen && <span>Help Support</span>}
+            </button>
           </div>
         </aside>
 
@@ -464,22 +494,13 @@ export default function Staff() {
         className="min-w-0 overflow-y-auto px-6 py-6"
         >
           <header className="mb-6 flex items-center gap-5">
-            <div className="flex gap-4">
-              <button className="rounded-full bg-white px-6 py-3 text-sm font-bold text-[#4e6e8c] shadow">
-                Dashboard
-              </button>
-              <button className="rounded-full bg-white px-6 py-3 text-sm font-bold text-[#1e4db7] shadow border-b-2 border-[#1e4db7]">
-                Inventory
-              </button>
-            </div>
-
-            <div className="ml-auto flex h-[52px] max-w-[520px] flex-1 items-center gap-3 rounded-full bg-[#e8f4fb] px-5 shadow">
-              <Search size={17} className="text-[#0d2d6c]" />
+            <div className="ml-auto flex h-[60px] w-full max-w-[700px] flex-1 items-center gap-3 rounded-full bg-[#e8f4fb] px-6 shadow-md">
+              <Search size={20} className="text-[#0d2d6c]" />
               <input
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search SKU or Product..."
-                className="h-full w-full bg-transparent text-sm font-medium outline-none placeholder:text-[#86a2bc]"
+                className="h-full w-full bg-transparent text-base font-medium outline-none placeholder:text-[#86a2bc]"
               />
             </div>
 
@@ -565,51 +586,81 @@ export default function Staff() {
                 </div>
               </div>
             ) : (
-              filteredProducts.map((product) => (
-                <article
-                  key={product.product_id}
-                  onClick={() => addToCart(product)}
-                  className="cursor-pointer overflow-hidden rounded-[20px] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl"
-                >
-                  <div className="relative h-[180px] overflow-hidden bg-slate-100">
-                    <img
-                      src={getImageUrl(product.product_image)}
-                      alt={product.product_name}
-                      className="h-full w-full object-cover transition hover:scale-105"
-                    />
+                filteredProducts.map((product) => {
+                  const isOutOfStock = product.quantity_in_stock === 0;
+                  const isLowStock =
+                    product.quantity_in_stock > 0 &&
+                    product.quantity_in_stock <= product.reorder_level;
 
-                    <span className="absolute right-3 top-3 rounded-full bg-white/95 px-3 py-1 text-[10px] font-extrabold uppercase text-[#23557e]">
-                      {product.category_name}
-                    </span>
-                  </div>
-
-                  <div className="px-4 py-4">
-                    <h3 className="min-h-[42px] text-base font-extrabold leading-snug text-[#132c51]">
-                      {product.product_name}
-                    </h3>
-
-                    <p className="mt-1 text-xs text-[#6f8aaa]">
-                      SKU: {product.product_code}
-                    </p>
-
-                    <div className="mt-4 flex items-center justify-between gap-2">
-                      <strong className="text-lg font-extrabold text-[#103a72]">
-                        RM {Number(product.selling_price).toFixed(2)}
-                      </strong>
-
-                      <span
-                        className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold ${
-                          product.quantity_in_stock <= product.reorder_level
-                            ? "bg-red-100 text-red-600"
-                            : "bg-[#e2f0f5] text-[#4c7891]"
+                  return (
+                    <article
+                      key={product.product_id}
+                      onClick={() => {
+                        if (!isOutOfStock) {
+                          addToCart(product);
+                        }
+                      }}
+                      className={`overflow-hidden rounded-[20px] shadow-sm transition ${isOutOfStock
+                          ? "cursor-not-allowed bg-gray-100 opacity-70"
+                          : "cursor-pointer bg-white hover:-translate-y-1 hover:shadow-xl"
                         }`}
-                      >
-                        {product.quantity_in_stock} in stock
-                      </span>
-                    </div>
-                  </div>
-                </article>
-              ))
+                    >
+                      <div className="relative h-[180px] overflow-hidden bg-slate-100">
+                        <img
+                          src={
+                            product.product_image?.startsWith("http")
+                              ? product.product_image
+                              : `http://localhost:5000${product.product_image}`
+                          }
+                          alt={product.product_name}
+                          className={`h-full w-full object-cover transition ${isOutOfStock ? "grayscale" : "hover:scale-105"
+                            }`}
+                        />
+
+                        {isOutOfStock && (
+                          <div className="absolute inset-0 grid place-items-center bg-black/20">
+                            <span className="rounded-full bg-white px-4 py-2 text-xs font-extrabold text-gray-700">
+                              OUT OF STOCK
+                            </span>
+                          </div>
+                        )}
+
+                        <span className="absolute right-3 top-3 rounded-full bg-white/95 px-3 py-1 text-[10px] font-extrabold uppercase text-[#23557e]">
+                          {product.category_name}
+                        </span>
+                      </div>
+
+                      <div className="px-4 py-4">
+                        <h3 className="min-h-[42px] text-base font-extrabold leading-snug text-[#132c51]">
+                          {product.product_name}
+                        </h3>
+
+                        <p className="mt-1 text-xs text-[#6f8aaa]">
+                          SKU: {product.product_code}
+                        </p>
+
+                        <div className="mt-4 flex items-center justify-between gap-2">
+                          <strong className="text-lg font-extrabold text-[#103a72]">
+                            RM {Number(product.selling_price).toFixed(2)}
+                          </strong>
+
+                          <span
+                            className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold ${isOutOfStock
+                                ? "bg-gray-200 text-gray-600"
+                                : isLowStock
+                                  ? "bg-orange-100 text-orange-600"
+                                  : "bg-[#e2f0f5] text-[#4c7891]"
+                              }`}
+                          >
+                            {isOutOfStock
+                              ? "Out of Stock"
+                              : `${product.quantity_in_stock} in stock`}
+                          </span>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
             )}
           </section>
         </motion.main>
@@ -645,7 +696,11 @@ export default function Staff() {
                   className="grid grid-cols-[56px_1fr_auto] items-center gap-3 rounded-[18px] bg-[#f8fbfe] p-3 border border-[#edf3f8]"
                 >
                   <img
-                    src={getImageUrl(item.product_image)}
+                    src={
+                      item.product_image?.startsWith("http")
+                        ? item.product_image
+                        : `http://localhost:5000${item.product_image}`
+                    }
                     alt={item.product_name}
                     className="h-14 w-14 rounded-2xl object-cover"
                   />
@@ -951,13 +1006,13 @@ export default function Staff() {
                 Hold Current Cart
                 </button>
 
-                {JSON.parse(localStorage.getItem("holdOrders") || "[]").length === 0 ? (
+                {JSON.parse(sessionStorage.getItem("holdOrders") || "[]").length === 0 ? (
                     <div className="rounded-2xl bg-[#eef6fb] p-5 text-center text-sm font-semibold text-[#6f84a1]">
                     No hold orders found.
                     </div>
                 ) : (
                     <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-                    {JSON.parse(localStorage.getItem("holdOrders") || "[]").map(
+                    {JSON.parse(sessionStorage.getItem("holdOrders") || "[]").map(
                         (order) => (
                         <div
                             key={order.id}
@@ -1137,10 +1192,10 @@ export default function Staff() {
 
             <button
               onClick={() => {
-                localStorage.setItem("taxRate", taxRate);
-                localStorage.setItem("terminalName", terminalName);
-                localStorage.setItem("receiptFooter", receiptFooter);
-                localStorage.setItem("eyeCareMode", eyeCareMode);
+                sessionStorage.setItem("taxRate", taxRate);
+                sessionStorage.setItem("terminalName", terminalName);
+                sessionStorage.setItem("receiptFooter", receiptFooter);
+                sessionStorage.setItem("eyeCareMode", eyeCareMode);
 
                 setShowSettings(false);
 

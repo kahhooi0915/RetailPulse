@@ -61,7 +61,7 @@ export default function AdminBranchManagement() {
     const [showSettings, setShowSettings] = useState(false);
 
     const [settingsData, setSettingsData] = useState(() => {
-        const savedSettings = localStorage.getItem("adminSettings");
+        const savedSettings = sessionStorage.getItem("adminSettings");
 
         return savedSettings
             ? JSON.parse(savedSettings)
@@ -76,7 +76,7 @@ export default function AdminBranchManagement() {
 
     useEffect(() => {
         const savedUser =
-            JSON.parse(localStorage.getItem("user")) ||
+            JSON.parse(sessionStorage.getItem("user")) ||
             JSON.parse(sessionStorage.getItem("user"));
 
         if (!savedUser) {
@@ -581,7 +581,7 @@ export default function AdminBranchManagement() {
 
                         <button
                             onClick={() => {
-                                localStorage.setItem(
+                                sessionStorage.setItem(
                                     "adminSettings",
                                     JSON.stringify(settingsData)
                                 );

@@ -4,6 +4,11 @@ from db import get_connection
 
 product_bp = Blueprint("product_bp", __name__)
 
+# Generate image URL for frontend display
+def get_product_image_url(product_id, has_image):
+    if has_image:
+        return f"/admin/products/{product_id}/image"
+    return None
 
 @product_bp.route("/admin/products", methods=["GET"])
 def admin_get_products():
@@ -36,7 +41,8 @@ def admin_get_products():
                 "reorder_level": row[6],
                 "status": row[7],
                 "description": row[8],
-                "has_image": row[9]
+                "has_image": row[9],
+                "product_image": get_product_image_url(row[0], row[9])
             })
 
         cur.close()
@@ -83,7 +89,8 @@ def admin_get_single_product(product_id):
             "reorder_level": row[6],
             "status": row[7],
             "description": row[8],
-            "has_image": row[9]
+            "has_image": row[9],
+            "product_image": get_product_image_url(row[0], row[9])
         }), 200
 
     except Exception as e:

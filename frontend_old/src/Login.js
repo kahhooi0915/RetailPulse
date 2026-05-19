@@ -30,7 +30,7 @@ export default function Login() {
       return;
     }
 
-    localStorage.setItem("user", JSON.stringify(data));
+    sessionStorage.setItem("user", JSON.stringify(data));
 
     if (data.role === "SYSTEM_ADMIN") {
       navigate("/admin");

@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { useEffect } from "react";
+import setFavicon from "./utils/setFavicon";
 import Login from "./pages/Login";
 import Staff from "./pages/Staff";
 import Manager from "./pages/Manager";
@@ -16,6 +18,12 @@ import AdminSalesMonitoring from "./pages/AdminSalesMonitoring";
 import AdminInventoryOverview from "./pages/AdminInventoryOverview";
 
 function App() {
+
+  useEffect(() => {
+    const user = JSON.parse(sessionStorage.getItem("user"));
+    setFavicon(user?.role);
+  }, []);
+
   return (
     <BrowserRouter>
       <Routes>
@@ -37,6 +45,7 @@ function App() {
       </Routes>
     </BrowserRouter>
   );
+
 }
 
 export default App;

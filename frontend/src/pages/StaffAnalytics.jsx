@@ -47,27 +47,27 @@ export default function StaffAnalytics() {
   //Settings states
   const [showSettings, setShowSettings] = useState(false);
   const [eyeCareMode, setEyeCareMode] = useState(
-    localStorage.getItem("eyeCareMode") === "true"
+    sessionStorage.getItem("eyeCareMode") === "true"
   );
   const [toast, setToast] = useState({ show: false, message: "" });
   const [chartType, setChartType] = useState(
-    localStorage.getItem("analyticsChartType") || "BAR"
+    sessionStorage.getItem("analyticsChartType") || "BAR"
   );
 
   const [displayMode, setDisplayMode] = useState(
-    localStorage.getItem("analyticsDisplayMode") || "REVENUE"
+    sessionStorage.getItem("analyticsDisplayMode") || "REVENUE"
   );
 
   const [topProductsLimit, setTopProductsLimit] = useState(
-    Number(localStorage.getItem("analyticsTopProductsLimit") || 5)
+    Number(sessionStorage.getItem("analyticsTopProductsLimit") || 5)
   );
 
   const [showLowStockPanel, setShowLowStockPanel] = useState(
-    localStorage.getItem("analyticsShowLowStockPanel") !== "false"
+    sessionStorage.getItem("analyticsShowLowStockPanel") !== "false"
   );
 
   const [showTopProductsPanel, setShowTopProductsPanel] = useState(
-    localStorage.getItem("analyticsShowTopProductsPanel") !== "false"
+    sessionStorage.getItem("analyticsShowTopProductsPanel") !== "false"
   );
 
   //Low Stock Request Modal states
@@ -80,7 +80,7 @@ export default function StaffAnalytics() {
 
   useEffect(() => {
     const savedUser =
-      JSON.parse(localStorage.getItem("user")) ||
+      JSON.parse(sessionStorage.getItem("user")) ||
       JSON.parse(sessionStorage.getItem("user"));
 
     if (!savedUser) {
@@ -345,7 +345,7 @@ export default function StaffAnalytics() {
   };
 
   const logout = () => {
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
     sessionStorage.removeItem("user");
     navigate("/");
   };
@@ -985,12 +985,12 @@ export default function StaffAnalytics() {
 
               <button
                 onClick={() => {
-                  localStorage.setItem("analyticsChartType", chartType);
-                  localStorage.setItem("analyticsDisplayMode", displayMode);
-                  localStorage.setItem("analyticsTopProductsLimit", topProductsLimit);
-                  localStorage.setItem("analyticsShowLowStockPanel", showLowStockPanel);
-                  localStorage.setItem("analyticsShowTopProductsPanel", showTopProductsPanel);
-                  localStorage.setItem("eyeCareMode", eyeCareMode);
+                  sessionStorage.setItem("analyticsChartType", chartType);
+                  sessionStorage.setItem("analyticsDisplayMode", displayMode);
+                  sessionStorage.setItem("analyticsTopProductsLimit", topProductsLimit);
+                  sessionStorage.setItem("analyticsShowLowStockPanel", showLowStockPanel);
+                  sessionStorage.setItem("analyticsShowTopProductsPanel", showTopProductsPanel);
+                  sessionStorage.setItem("eyeCareMode", eyeCareMode);
 
                   setShowSettings(false);
                   setToast({
