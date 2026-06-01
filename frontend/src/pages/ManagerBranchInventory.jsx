@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-    BarChart3,
-    Truck,
-    Boxes,
-    HelpCircle,
     Bell,
     Settings,
     RefreshCcw,
+    Pencil,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import ManagerSidebar from "../components/ManagerSidebar";
 
 const API_BASE = "http://localhost:5000";
 
@@ -26,10 +24,17 @@ export default function ManagerBranchInventory() {
     const [transfers, setTransfers] = useState([]);
     const [transferItems, setTransferItems] = useState({});
 
+    const [editingItem, setEditingItem] = useState(null);
+    const [editQuantity, setEditQuantity] = useState("");
+    const [savingStock, setSavingStock] = useState(false);
+
+    // For auto-suggested transfer modal
+    const [allInventory, setAllInventory] = useState([]);
+    const [suggestionModal, setSuggestionModal] = useState(null);
+    const [creatingTransfer, setCreatingTransfer] = useState(false);
+
     useEffect(() => {
-        const savedUser =
-            JSON.parse(sessionStorage.getItem("user")) ||
-            JSON.parse(sessionStorage.getItem("user"));
+        const savedUser = JSON.parse(sessionStorage.getItem("user"));
 
         if (!savedUser) {
             navigate("/");
@@ -56,9 +61,10 @@ export default function ManagerBranchInventory() {
             ]);
 
             const invData = await invRes.json();
+            setAllInventory(Array.isArray(invData) ? invData : []);
             const productData = await productRes.json();
-
             const transferData = await transferRes.json();
+
             setTransfers(Array.isArray(transferData) ? transferData : []);
 
             const itemsMap = {};
@@ -75,7 +81,6 @@ export default function ManagerBranchInventory() {
             );
 
             setTransferItems(itemsMap);
-
             setProducts(Array.isArray(productData) ? productData : []);
 
             const branchData = Array.isArray(invData)
@@ -102,7 +107,6 @@ export default function ManagerBranchInventory() {
 
     const logout = () => {
         sessionStorage.removeItem("user");
-        sessionStorage.removeItem("user");
         navigate("/");
     };
 
@@ -126,8 +130,43 @@ export default function ManagerBranchInventory() {
         });
     };
 
-    const handleAutoSuggestTransfer = async (item) => {
+    const openTransferSuggestion = (item) => {
+        const candidateBranches = allInventory
+            .filter((inv) =>
+                Number(inv.product_id) === Number(item.product_id) &&
+                Number(inv.branch_id) !== Number(user.branch_id) &&
+                Number(inv.quantity_in_stock) > Number(item.reorder_level)
+            )
+            .sort((a, b) => Number(b.quantity_in_stock) - Number(a.quantity_in_stock));
+
+        if (candidateBranches.length === 0) {
+            setToast({
+                type: "error",
+                message: "No suitable branch has enough stock for this product.",
+            });
+            return;
+        }
+
+        const sourceBranch = candidateBranches[0];
+
+        setSuggestionModal({
+            item,
+            sourceBranch,
+            suggestedQty: Math.min(
+                Number(sourceBranch.quantity_in_stock) - Number(item.reorder_level),
+                Number(item.reorder_level) - Number(item.quantity_in_stock)
+            ),
+        });
+    };
+
+    const handleAutoSuggestTransfer = async () => {
+        if (!suggestionModal) return;
+
+        const item = suggestionModal.item;
+
         try {
+            setCreatingTransfer(true);
+
             const res = await fetch(`${API_BASE}/manager/stock-transfer/auto-suggest`, {
                 method: "POST",
                 headers: {
@@ -147,6 +186,7 @@ export default function ManagerBranchInventory() {
                     type: "error",
                     message: data.message || "Failed to create transfer request.",
                 });
+                setCreatingTransfer(false);
                 return;
             }
 
@@ -154,75 +194,97 @@ export default function ManagerBranchInventory() {
                 type: "success",
                 message: `Transfer ${data.transfer_code} created successfully`,
             });
+
+            setSuggestionModal(null);
+            setCreatingTransfer(false);
             fetchInventory(user.branch_id);
         } catch (error) {
             console.error(error);
             setToast({
                 type: "error",
-                message: data.message || "Failed to create transfer request.",
+                message: "Failed to create transfer request.",
             });
+            setCreatingTransfer(false);
+        }
+    };
+
+    const openEditModal = (item) => {
+        setEditingItem(item);
+        setEditQuantity(String(item.quantity_in_stock));
+    };
+
+    const closeEditModal = () => {
+        setEditingItem(null);
+        setEditQuantity("");
+        setSavingStock(false);
+    };
+
+    const handleUpdateStock = async () => {
+        if (!editingItem) return;
+
+        if (editQuantity === "" || Number(editQuantity) < 0) {
+            setToast({
+                type: "error",
+                message: "Stock quantity cannot be empty or negative.",
+            });
+            return;
+        }
+
+        try {
+            setSavingStock(true);
+
+            const res = await fetch(
+                `${API_BASE}/admin/inventory/${editingItem.product_id}/${editingItem.branch_id}`,
+                {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        quantity_in_stock: Number(editQuantity),
+                    }),
+                }
+            );
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                setToast({
+                    type: "error",
+                    message: data.message || "Failed to update stock.",
+                });
+                setSavingStock(false);
+                return;
+            }
+
+            setToast({
+                type: "success",
+                message: "Stock updated successfully.",
+            });
+
+            closeEditModal();
+            fetchInventory(user.branch_id);
+        } catch (error) {
+            console.error(error);
+            setToast({
+                type: "error",
+                message: "Failed to update stock.",
+            });
+            setSavingStock(false);
         }
     };
 
     return (
-        <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
-            <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
-
-                {/* SIDEBAR (EXACT SAME) */}
-                <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
-                    <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
-                        RetailPulse
-                    </div>
-
-                    <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
-                        <h4 className="font-extrabold text-[#16325b]">
-                            {user?.branch_name || "Branch"}
-                        </h4>
-                        <p className="mt-1 text-xs text-[#6f85a3]">
-                            Manager ID: {user?.user_id}
-                        </p>
-                    </div>
-
-                    <nav className="space-y-3">
-                        <button
-                            onClick={() => navigate("/manager-dashboard")}
-                            className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
-                        >
-                            <BarChart3 size={18} />
-                            <span>Dashboard</span>
-                        </button>
-
-                        <button
-                            onClick={() => navigate("/manager-stock-transfer")}
-                            className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
-                        >
-                            <Truck size={18} />
-                            <span>Stock Transfer</span>
-                        </button>
-
-                        <button className="flex w-full min-w-0 items-center gap-4 rounded-2xl bg-white px-4 py-4 font-bold text-[#1e4db7] shadow">
-                            <Boxes size={18} />
-                            <span className="whitespace-nowrap">Branch Inventory</span>
-                        </button>
-                    </nav>
-
-                    <div className="mt-auto space-y-3">
-                        <button
-                            onClick={() => setShowHelp(true)}
-                            className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]"
-                        >
-                            <HelpCircle size={17} />
-                            <span>Help Support</span>
-                        </button>
-                    </div>
-                </aside>
+        <div className="min-h-screen w-full overflow-x-hidden bg-[#eef6fb] text-[#17325c]">
+            <div className="flex h-screen w-full overflow-x-hidden">
+                <ManagerSidebar user={user} onOpenHelp={() => setShowHelp(true)} />
 
                 {/* MAIN */}
                 <motion.main
                     initial={{ opacity: 0, x: 30 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.3 }}
-                    className="min-w-0 overflow-y-auto px-8 py-6"
+                    className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-8 py-6"
                 >
                     {/* HEADER */}
                     <header className="mb-8 flex items-center gap-5">
@@ -231,7 +293,7 @@ export default function ManagerBranchInventory() {
                                 Branch Inventory
                             </h1>
                             <p className="text-sm text-[#6f85a3]">
-                                Monitor stock levels and manage low stock items.
+                                Monitor stock levels and update branch inventory quantity.
                             </p>
                         </div>
 
@@ -298,6 +360,7 @@ export default function ManagerBranchInventory() {
                                     <th className="px-4 py-3">Stock</th>
                                     <th className="px-4 py-3">Reorder</th>
                                     <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3 text-right">Action</th>
                                 </tr>
                             </thead>
 
@@ -306,26 +369,22 @@ export default function ManagerBranchInventory() {
                                     const isLow = item.quantity_in_stock <= item.reorder_level;
 
                                     return (
-                                        <tr
-                                            key={item.product_id}
-                                            className="border-t"
-                                        >
+                                        <tr key={item.product_id} className="border-t">
                                             <td className="px-4 py-4 font-bold">
                                                 {item.product_name}
                                             </td>
                                             <td className="px-4 py-4">{item.product_code}</td>
-                                            <td className="px-4 py-4">{item.quantity_in_stock}</td>
+                                            <td className="px-4 py-4 font-bold">
+                                                {item.quantity_in_stock}
+                                            </td>
                                             <td className="px-4 py-4">{item.reorder_level}</td>
                                             <td className="px-4 py-4">
                                                 {isLow ? (
                                                     <div className="flex items-center justify-between w-full">
-
-                                                        {/* LEFT SIDE */}
                                                         <span className="text-red-500 font-bold">
                                                             LOW STOCK
                                                         </span>
 
-                                                        {/* RIGHT SIDE */}
                                                         {hasExistingTransferRequest(item.product_id) ? (
                                                             <button
                                                                 disabled
@@ -335,13 +394,12 @@ export default function ManagerBranchInventory() {
                                                             </button>
                                                         ) : (
                                                             <button
-                                                                onClick={() => handleAutoSuggestTransfer(item)}
+                                                                onClick={() => openTransferSuggestion(item)}
                                                                 className="rounded-full bg-[#0c2f73] px-4 py-2 text-xs font-extrabold text-white hover:bg-[#173f8a]"
                                                             >
                                                                 Auto Suggest Transfer
                                                             </button>
                                                         )}
-
                                                     </div>
                                                 ) : (
                                                     <span className="text-green-600 font-bold">
@@ -349,13 +407,22 @@ export default function ManagerBranchInventory() {
                                                     </span>
                                                 )}
                                             </td>
+                                            <td className="px-4 py-4 text-right">
+                                                <button
+                                                    onClick={() => openEditModal(item)}
+                                                    className="inline-flex items-center gap-2 rounded-full bg-[#1e4db7] px-4 py-2 text-xs font-extrabold text-white hover:bg-[#173f8a]"
+                                                >
+                                                    <Pencil size={14} />
+                                                    Edit Stock
+                                                </button>
+                                            </td>
                                         </tr>
                                     );
                                 })}
 
                                 {filtered.length === 0 && (
                                     <tr>
-                                        <td colSpan="5" className="text-center py-6">
+                                        <td colSpan="6" className="text-center py-6">
                                             No data found
                                         </td>
                                     </tr>
@@ -366,13 +433,88 @@ export default function ManagerBranchInventory() {
                 </motion.main>
             </div>
 
+            {/* EDIT STOCK MODAL */}
+            {editingItem && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="w-[430px] rounded-3xl bg-white p-6 shadow-2xl"
+                    >
+                        <h2 className="text-xl font-extrabold text-[#07102f]">
+                            Edit Product Stock
+                        </h2>
+
+                        <p className="mt-1 text-sm text-[#6f85a3]">
+                            Update the inventory quantity for your branch only.
+                        </p>
+
+                        <div className="mt-5 rounded-2xl bg-[#eef6fb] p-4">
+                            <p className="text-xs font-bold uppercase text-[#6f85a3]">
+                                Product
+                            </p>
+                            <p className="mt-1 font-extrabold text-[#17325c]">
+                                {editingItem.product_name}
+                            </p>
+
+                            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                                <div>
+                                    <p className="text-xs font-bold uppercase text-[#6f85a3]">
+                                        Product Code
+                                    </p>
+                                    <p className="font-bold">{editingItem.product_code}</p>
+                                </div>
+
+                                <div>
+                                    <p className="text-xs font-bold uppercase text-[#6f85a3]">
+                                        Reorder Level
+                                    </p>
+                                    <p className="font-bold">{editingItem.reorder_level}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-5">
+                            <label className="mb-2 block text-sm font-bold text-[#17325c]">
+                                Stock Quantity
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                value={editQuantity}
+                                onChange={(e) => setEditQuantity(e.target.value)}
+                                className="w-full rounded-2xl border border-blue-100 px-4 py-3 font-bold outline-none focus:border-[#1e4db7]"
+                            />
+                        </div>
+
+                        <div className="mt-6 flex justify-end gap-3">
+                            <button
+                                onClick={closeEditModal}
+                                className="rounded-full bg-gray-100 px-5 py-3 text-sm font-extrabold text-gray-600 hover:bg-gray-200"
+                            >
+                                Cancel
+                            </button>
+
+                            <button
+                                onClick={handleUpdateStock}
+                                disabled={savingStock}
+                                className="rounded-full bg-[#0c2f73] px-5 py-3 text-sm font-extrabold text-white hover:bg-[#173f8a] disabled:bg-gray-400"
+                            >
+                                {savingStock ? "Saving..." : "Save Changes"}
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+
             {/* HELP MODAL */}
             {showHelp && (
                 <div className="fixed inset-0 bg-black/30 flex items-center justify-center">
                     <div className="bg-white p-6 rounded-2xl w-[400px]">
                         <h2 className="text-xl font-bold mb-3">Help</h2>
                         <p className="text-sm">
-                            Monitor inventory and identify low stock items that need transfer.
+                            Monitor inventory, update branch stock quantity, and identify low stock items that need transfer.
                         </p>
                         <button
                             onClick={() => setShowHelp(false)}
@@ -383,6 +525,67 @@ export default function ManagerBranchInventory() {
                     </div>
                 </div>
             )}
+
+            {suggestionModal && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="w-[430px] rounded-xl bg-white p-6 shadow-2xl"
+                    >
+                        <h2 className="text-lg font-extrabold text-[#07102f]">
+                            Confirm Stock Transfer
+                        </h2>
+
+                        <p className="mt-3 text-xs leading-relaxed text-[#6f85a3]">
+                            The system found a suitable branch to supply this low-stock product.
+                        </p>
+
+                        <div className="mt-5 rounded-md bg-[#eef6fb] px-5 py-4 text-xs">
+                            {[
+                                ["Product", suggestionModal.item.product_name],
+                                ["Current Branch", user?.branch_name],
+                                ["Take Stock From", suggestionModal.sourceBranch.branch_name],
+                                ["Source Branch Stock", suggestionModal.sourceBranch.quantity_in_stock],
+                                ["Your Current Stock", suggestionModal.item.quantity_in_stock],
+                                ["Reorder Level", suggestionModal.item.reorder_level],
+                            ].map(([label, value]) => (
+                                <div key={label} className="mb-2 flex items-center justify-between gap-6 last:mb-0">
+                                    <span className="font-extrabold text-[#17325c]">
+                                        {label}:
+                                    </span>
+                                    <span className="text-right font-bold text-[#17325c]">
+                                        {value}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+
+                        <p className="mt-5 text-center text-xs font-extrabold text-[#17325c]">
+                            Do you want to create this stock transfer request?
+                        </p>
+
+                        <div className="mt-5 grid grid-cols-2 gap-3">
+                            <button
+                                onClick={() => setSuggestionModal(null)}
+                                className="rounded-lg bg-[#e5f3fb] px-4 py-3 text-xs font-extrabold text-[#17325c] hover:bg-[#d7ebf7]"
+                            >
+                                No
+                            </button>
+
+                            <button
+                                onClick={handleAutoSuggestTransfer}
+                                disabled={creatingTransfer}
+                                className="rounded-lg bg-[#15108a] px-4 py-3 text-xs font-extrabold text-white shadow-md hover:bg-[#0f0a6d] disabled:bg-gray-400"
+                            >
+                                {creatingTransfer ? "Creating..." : "Yes, Request Transfer"}
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+
             {toast && (
                 <motion.div
                     initial={{ opacity: 0, y: 40 }}
@@ -393,7 +596,7 @@ export default function ManagerBranchInventory() {
                 >
                     <div
                         className={`px-5 py-4 rounded-2xl shadow-lg text-white font-semibold flex items-center gap-3
-      ${toast.type === "success" ? "bg-green-500" : "bg-red-500"}`}
+                        ${toast.type === "success" ? "bg-green-500" : "bg-red-500"}`}
                     >
                         {toast.type === "success" ? "✔" : "⚠"}
                         {toast.message}

@@ -12,7 +12,9 @@ from routes.inventory_routes import inventory_bp
 from routes.sales_routes import sales_bp
 from routes.stock_transfer_routes import stock_transfer_bp
 from routes.forecast_routes import forecast_bp
-
+from routes.purchase_routes import purchase_bp
+from routes.forgot_password_routes import forgot_password_bp
+from routes.dashboard_routes import dashboard_bp
 
 def create_app():
     app = Flask(__name__)
@@ -36,6 +38,9 @@ def create_app():
     app.register_blueprint(sales_bp)
     app.register_blueprint(stock_transfer_bp)
     app.register_blueprint(forecast_bp)
+    app.register_blueprint(purchase_bp)
+    app.register_blueprint(forgot_password_bp)
+    app.register_blueprint(dashboard_bp)
     
     return app
 

@@ -11,6 +11,7 @@ import {
     Phone,
     X,
     RefreshCcw,
+    Warehouse,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -20,6 +21,7 @@ const emptyForm = {
     branch_name: "",
     branch_address: "",
     phone: "",
+    branch_type: "BRANCH",
 };
 
 const formatPhoneNumber = (value) => {
@@ -59,7 +61,7 @@ export default function AdminBranchManagement() {
     const [toast, setToast] = useState(null);
     const [showNotifications, setShowNotifications] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
-
+    const [showHelp, setShowHelp] = useState(false);
     const [settingsData, setSettingsData] = useState(() => {
         const savedSettings = sessionStorage.getItem("adminSettings");
 
@@ -75,9 +77,7 @@ export default function AdminBranchManagement() {
     });
 
     useEffect(() => {
-        const savedUser =
-            JSON.parse(sessionStorage.getItem("user")) ||
-            JSON.parse(sessionStorage.getItem("user"));
+        const savedUser = JSON.parse(sessionStorage.getItem("user"));
 
         if (!savedUser) {
             navigate("/");
@@ -130,12 +130,15 @@ export default function AdminBranchManagement() {
                 item.branch_code?.toLowerCase().includes(keyword) ||
                 item.branch_name?.toLowerCase().includes(keyword) ||
                 item.branch_address?.toLowerCase().includes(keyword) ||
-                item.phone?.toLowerCase().includes(keyword)
+                item.phone?.toLowerCase().includes(keyword) ||
+                item.branch_type?.toLowerCase().includes(keyword)
             );
         });
     }, [branches, searchTerm]);
 
     const totalBranches = branches.length;
+    const retailBranches = branches.filter((item) => item.branch_type === "BRANCH").length;
+    const warehouses = branches.filter((item) => item.branch_type === "WAREHOUSE").length;
     const branchesWithAddress = branches.filter((item) =>
         item.branch_address?.trim()
     ).length;
@@ -160,6 +163,7 @@ export default function AdminBranchManagement() {
             branch_name: selectedBranch.branch_name || "",
             branch_address: selectedBranch.branch_address || "",
             phone: selectedBranch.phone || "",
+            branch_type: selectedBranch.branch_type || "BRANCH",
         });
 
         setFieldErrors({ phone: "" });
@@ -203,6 +207,9 @@ export default function AdminBranchManagement() {
         if (!formData.branch_name.trim()) return "Branch name is required.";
         if (!formData.branch_address.trim()) return "Branch address is required.";
         if (!formData.phone.trim()) return "Phone number is required.";
+        if (!["BRANCH", "WAREHOUSE"].includes(formData.branch_type)) {
+            return "Branch type is invalid.";
+        }
         if (phoneError) return phoneError;
 
         return null;
@@ -225,6 +232,7 @@ export default function AdminBranchManagement() {
                 branch_name: formData.branch_name.trim(),
                 branch_address: formData.branch_address.trim(),
                 phone: formData.phone.trim(),
+                branch_type: formData.branch_type,
             };
 
             const url = editBranch
@@ -299,11 +307,12 @@ export default function AdminBranchManagement() {
             <DashboardLayout
                 user={user}
                 title="Branch Management"
-                subtitle="Create, update, view, and manage retail branch records."
+                subtitle="Create, update, view, and manage branch and warehouse records."
                 modelText={`Current View: ${settingsData.dashboardView}`}
                 onRefresh={loadBranches}
                 onOpenSettings={() => setShowSettings(true)}
                 onOpenNotifications={() => setShowNotifications(true)}
+                onOpenChat={() => setShowHelp(true)}
                 notificationCount={incompleteBranches}
                 compactMode={settingsData.compactMode}
             >
@@ -322,21 +331,21 @@ export default function AdminBranchManagement() {
                     >
                         <section className="mb-6 grid grid-cols-2 gap-5 xl:grid-cols-4">
                             <SummaryCard
-                                title="Total Branches"
+                                title="Total Locations"
                                 value={totalBranches}
                                 icon={Building2}
                                 color="text-[#1e4db7]"
                             />
                             <SummaryCard
-                                title="With Address"
-                                value={branchesWithAddress}
+                                title="Retail Branches"
+                                value={retailBranches}
                                 icon={MapPin}
                                 color="text-green-600"
                             />
                             <SummaryCard
-                                title="With Phone"
-                                value={branchesWithPhone}
-                                icon={Phone}
+                                title="Warehouses"
+                                value={warehouses}
+                                icon={Warehouse}
                                 color="text-[#07102f]"
                             />
                             <SummaryCard
@@ -354,7 +363,7 @@ export default function AdminBranchManagement() {
                                         Branch Records
                                     </h2>
                                     <p className="mt-1 text-sm text-[#6f85a3]">
-                                        Admin can maintain branch details used by users, inventory, sales, and stock transfers.
+                                        Admin can maintain branch and warehouse details used by users, inventory, sales, and stock transfers.
                                     </p>
                                 </div>
 
@@ -373,7 +382,7 @@ export default function AdminBranchManagement() {
                                     <input
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
-                                        placeholder="Search by branch code, name, address, or phone..."
+                                        placeholder="Search by branch code, name, type, address, or phone..."
                                         className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-[#8aa0bb]"
                                     />
                                 </div>
@@ -384,6 +393,7 @@ export default function AdminBranchManagement() {
                                     <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
                                         <tr>
                                             <th className="px-4 py-3">Branch</th>
+                                            <th className="px-4 py-3">Type</th>
                                             <th className="px-4 py-3">Address</th>
                                             <th className="px-4 py-3">Phone</th>
                                             <th className="px-4 py-3 text-right">Action</th>
@@ -400,6 +410,17 @@ export default function AdminBranchManagement() {
                                                     <p className="mt-1 text-xs font-bold text-[#6f85a3]">
                                                         {item.branch_code || `BID-${item.branch_id}`}
                                                     </p>
+                                                </td>
+
+                                                <td className="px-4 py-4">
+                                                    <span
+                                                        className={`rounded-full px-3 py-1 text-xs font-extrabold ${item.branch_type === "WAREHOUSE"
+                                                                ? "bg-purple-100 text-purple-700"
+                                                                : "bg-blue-100 text-[#1e4db7]"
+                                                            }`}
+                                                    >
+                                                        {item.branch_type === "WAREHOUSE" ? "Warehouse" : "Branch"}
+                                                    </span>
                                                 </td>
 
                                                 <td className="px-4 py-4">
@@ -437,7 +458,7 @@ export default function AdminBranchManagement() {
                                         {filteredBranches.length === 0 && (
                                             <tr>
                                                 <td
-                                                    colSpan="4"
+                                                    colSpan="5"
                                                     className="px-4 py-10 text-center font-semibold text-[#6f85a3]"
                                                 >
                                                     No branch records found.
@@ -457,8 +478,8 @@ export default function AdminBranchManagement() {
                     title={editBranch ? "Update Branch" : "Add New Branch"}
                     subtitle={
                         editBranch
-                            ? "Update branch name, address, and contact number."
-                            : "Create a new branch record for RetailPulse."
+                            ? "Update branch name, type, address, and contact number."
+                            : "Create a new branch or warehouse record for RetailPulse."
                     }
                     onClose={closeForm}
                 >
@@ -468,6 +489,16 @@ export default function AdminBranchManagement() {
                             value={formData.branch_name}
                             onChange={(value) => handleFormChange("branch_name", value)}
                             placeholder="Example: Ayer Keroh Branch"
+                        />
+
+                        <FormSelect
+                            label="Branch Type"
+                            value={formData.branch_type}
+                            onChange={(value) => handleFormChange("branch_type", value)}
+                            options={[
+                                { value: "BRANCH", label: "Branch" },
+                                { value: "WAREHOUSE", label: "Warehouse" },
+                            ]}
                         />
 
                         <FormTextarea
@@ -596,6 +627,43 @@ export default function AdminBranchManagement() {
                 </Modal>
             )}
 
+            {showHelp && (
+                <Modal
+                    onClose={() => setShowHelp(false)}
+                    title="Branch Management Help Guide"
+                    subtitle="Manage branch and warehouse information used throughout the system."
+                >
+                    <div className="space-y-5">
+                        <div className="rounded-2xl bg-[#eef6fb] p-5">
+                            <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wide text-[#1e4db7]">
+                                What You Can Do
+                            </h3>
+
+                            <ul className="space-y-3 text-sm text-[#17325c]">
+                                <li>• Add new retail branch or warehouse records.</li>
+                                <li>• Update branch name, type, address, and phone number.</li>
+                                <li>• Delete locations that are no longer used.</li>
+                                <li>• Search locations by code, name, type, address, or phone.</li>
+                                <li>• Review incomplete location information.</li>
+                            </ul>
+                        </div>
+
+                        <div className="rounded-2xl bg-[#f8fcff] p-5">
+                            <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wide text-[#07102f]">
+                                Important Notes
+                            </h3>
+
+                            <ul className="space-y-3 text-sm leading-6 text-[#6f85a3]">
+                                <li>• BRANCH represents a normal retail outlet.</li>
+                                <li>• WAREHOUSE represents a central stock location.</li>
+                                <li>• Both branch and warehouse records can be linked to inventory and stock transfers.</li>
+                                <li>• Deleting a branch or warehouse may fail if it is referenced by existing records.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
             {showNotifications && (
                 <div className="fixed inset-0 z-50">
                     <div
@@ -619,20 +687,20 @@ export default function AdminBranchManagement() {
 
                         <div className="space-y-4">
                             <NotificationCard
-                                title="Incomplete Branch Info"
-                                desc={`${incompleteBranches} branch record(s) missing address or phone.`}
+                                title="Incomplete Location Info"
+                                desc={`${incompleteBranches} branch/warehouse record(s) missing address or phone.`}
                                 color="orange"
                             />
 
                             <NotificationCard
-                                title="Total Branches"
-                                desc={`${totalBranches} branch record(s) registered.`}
+                                title="Total Locations"
+                                desc={`${totalBranches} location record(s) registered.`}
                                 color="blue"
                             />
 
                             <NotificationCard
-                                title="Complete Contact Info"
-                                desc={`${branchesWithPhone} branch record(s) have contact number.`}
+                                title="Warehouse Records"
+                                desc={`${warehouses} warehouse record(s) registered.`}
                                 color="green"
                             />
                         </div>
@@ -702,6 +770,28 @@ function FormInput({
                     {error}
                 </p>
             )}
+        </div>
+    );
+}
+
+function FormSelect({ label, value, onChange, options }) {
+    return (
+        <div>
+            <label className="mb-2 block text-sm font-bold text-[#17325c]">
+                {label}
+            </label>
+
+            <select
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none"
+            >
+                {options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                        {option.label}
+                    </option>
+                ))}
+            </select>
         </div>
     );
 }

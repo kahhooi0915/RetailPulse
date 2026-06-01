@@ -5,12 +5,16 @@ import {
     BarChart3,
     Bot,
     ChevronRight,
+    FileDown,
+    FileSpreadsheet,
     Package,
+    Printer,
     Send,
     TrendingUp,
     X,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { downloadPDF } from "../utils/downloadPDF";
 
 const API_BASE = "http://localhost:5000";
 
@@ -28,6 +32,7 @@ export default function AdminReportsForecasting() {
     const [showChat, setShowChat] = useState(false);
     const [showForecastDrawer, setShowForecastDrawer] = useState(false);
     const [chatInput, setChatInput] = useState("");
+    const [isPdfGenerating, setIsPdfGenerating] = useState(false);
 
     const [messages, setMessages] = useState([
         {
@@ -140,6 +145,17 @@ export default function AdminReportsForecasting() {
 
     const selectedModelSummary = topForecastProduct?.selected_model || "No Data";
 
+    const generatedDate = useMemo(() => new Date(), []);
+    const generatedDateTime = useMemo(() => {
+        return generatedDate.toLocaleString();
+    }, [generatedDate]);
+    const generatedDateForFile = useMemo(() => {
+        const year = generatedDate.getFullYear();
+        const month = String(generatedDate.getMonth() + 1).padStart(2, "0");
+        const day = String(generatedDate.getDate()).padStart(2, "0");
+        return `${year}${month}${day}`;
+    }, [generatedDate]);
+
     const slowMovingProducts = useMemo(() => {
         return [...forecastData]
             .filter((item) => Number(item.total_quantity || 0) <= 5)
@@ -171,6 +187,7 @@ export default function AdminReportsForecasting() {
         "What is the overall sales forecast?",
     ];
 
+    //Rule-based AI Assistant
     const generateAssistantReply = (question) => {
         const q = question.toLowerCase();
 
@@ -235,10 +252,126 @@ export default function AdminReportsForecasting() {
         setChatInput("");
     };
 
-   
+    const handlePrintReport = () => {
+        window.print();
+    };
+
+    const handleExportCsv = () => {
+        const headers = [
+            "Product Name",
+            "Forecast Quantity",
+            "Selected Model",
+            "MAE",
+            "RMSE",
+            "Forecast Growth",
+            "Generated Date",
+        ];
+
+        const rows = forecastData.map((item) => [
+            item.product_name || "-",
+            item.forecast_quantity ?? 0,
+            item.selected_model || "-",
+            item.mae ?? "-",
+            item.rmse ?? "-",
+            `${forecastGrowth.toFixed(1)}%`,
+            generatedDateTime,
+        ]);
+
+        const csv = [headers, ...rows]
+            .map((row) => row.map(formatCsvValue).join(","))
+            .join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = `RetailPulse_Forecast_Report_${generatedDateForFile}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleDownloadPdf = async () => {
+        try {
+            setIsPdfGenerating(true);
+            document.body.classList.add("exporting-report");
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await downloadPDF({
+                elementId: "forecast-report-content",
+                fileName: `RetailPulse_Forecast_Report_${generatedDateForFile}.pdf`,
+            });
+        } finally {
+            document.body.classList.remove("exporting-report");
+            setIsPdfGenerating(false);
+        }
+    };
 
     return (
         <>
+            <style>
+                {`
+                    .exporting-report .no-print {
+                        display: none !important;
+                    }
+
+                    @media print {
+                        @page {
+                            size: A4;
+                            margin: 14mm;
+                        }
+
+                        html,
+                        body,
+                        #root {
+                            height: auto !important;
+                            overflow: visible !important;
+                            background: #ffffff !important;
+                        }
+
+                        body * {
+                            visibility: hidden !important;
+                        }
+
+                        #forecast-report-content,
+                        #forecast-report-content * {
+                            visibility: visible !important;
+                        }
+
+                        #forecast-report-content {
+                            position: absolute !important;
+                            left: 0 !important;
+                            top: 0 !important;
+                            width: 100% !important;
+                            background: #ffffff !important;
+                            color: #07102f !important;
+                        }
+
+                        .no-print {
+                            display: none !important;
+                        }
+
+                        #forecast-report-content section,
+                        #forecast-report-content .report-panel {
+                            break-inside: avoid;
+                            page-break-inside: avoid;
+                        }
+
+                        #forecast-report-content .shadow-sm,
+                        #forecast-report-content .shadow-xl {
+                            box-shadow: none !important;
+                        }
+
+                        #forecast-report-content .bg-gradient-to-br {
+                            background: #07102f !important;
+                            color: #ffffff !important;
+                            print-color-adjust: exact;
+                            -webkit-print-color-adjust: exact;
+                        }
+                    }
+                `}
+            </style>
+
             <DashboardLayout
                 user={user}
                 title="Reports & Forecasting"
@@ -258,6 +391,55 @@ export default function AdminReportsForecasting() {
                     </div>
                 ) : (
                     <>
+                        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                            <div>
+                                <p className="text-sm font-semibold text-[#6f85a3]">
+                                    Generated: {generatedDateTime}
+                                </p>
+                            </div>
+
+                            <div className="no-print">
+                                <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                                    Export & Reporting Tools
+                                </p>
+                                <div className="flex flex-wrap gap-3">
+                                    <ReportActionButton
+                                        icon={Printer}
+                                        label="Print Report"
+                                        onClick={handlePrintReport}
+                                    />
+                                    <ReportActionButton
+                                        icon={FileSpreadsheet}
+                                        label="Export CSV"
+                                        onClick={handleExportCsv}
+                                    />
+                                    <ReportActionButton
+                                        icon={FileDown}
+                                        label={isPdfGenerating ? "Generating PDF..." : "Download PDF"}
+                                        onClick={handleDownloadPdf}
+                                        disabled={isPdfGenerating}
+                                        primary
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="forecast-report-content">
+                            <div className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
+                                <p className="text-xs font-bold uppercase tracking-widest text-[#1e4db7]">
+                                    RetailPulse
+                                </p>
+                                <h2 className="mt-2 text-2xl font-extrabold text-[#07102f]">
+                                    Forecast Report
+                                </h2>
+                                <p className="mt-1 text-sm text-[#6f85a3]">
+                                    Analyze product sales trends and estimate next-month demand.
+                                </p>
+                                <p className="mt-2 text-xs font-bold text-[#17325c]">
+                                    Generated: {generatedDateTime}
+                                </p>
+                            </div>
+
                             <section className="mb-6 rounded-3xl bg-gradient-to-br from-[#07102f] via-[#0c2f73] to-[#1e4db7] p-7 text-white shadow-xl">
                                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr]">
                                     <div>
@@ -390,7 +572,7 @@ export default function AdminReportsForecasting() {
 
                                         <button
                                             onClick={() => setShowForecastDrawer(true)}
-                                            className="flex items-center gap-2 rounded-2xl bg-[#0c2f73] px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-[#103986]"
+                                            className="no-print flex items-center gap-2 rounded-2xl bg-[#0c2f73] px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-[#103986]"
                                         >
                                             View Details
                                             <ChevronRight size={18} />
@@ -475,7 +657,7 @@ export default function AdminReportsForecasting() {
 
                                     <button
                                         onClick={() => setShowChat(true)}
-                                        className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0c2f73] py-4 font-extrabold text-white hover:bg-[#103986]"
+                                        className="no-print mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0c2f73] py-4 font-extrabold text-white hover:bg-[#103986]"
                                     >
                                         <Bot size={18} />
                                         Open AI Forecast Assistant
@@ -487,13 +669,14 @@ export default function AdminReportsForecasting() {
                                 <ForecastTable title="Top Selling Products" data={topSellingProducts} />
                                 <ForecastTable title="Slow Moving Products" data={slowMovingProducts} />
                             </section>
+                        </div>
                     </>
                 )}
             </DashboardLayout>
 
             <button
                 onClick={() => setShowForecastDrawer(true)}
-                className="fixed right-0 top-1/2 z-40 flex h-24 w-11 -translate-y-1/2 items-center justify-center rounded-l-2xl bg-[#0c2f73] text-white shadow-2xl hover:bg-[#103986]"
+                className="no-print fixed right-0 top-1/2 z-40 flex h-24 w-11 -translate-y-1/2 items-center justify-center rounded-l-2xl bg-[#0c2f73] text-white shadow-2xl hover:bg-[#103986]"
                 title="Open forecast details"
             >
                 <ChevronRight size={28} />
@@ -501,7 +684,7 @@ export default function AdminReportsForecasting() {
 
             <button
                 onClick={() => setShowChat(true)}
-                className="fixed bottom-7 right-7 z-40 grid h-16 w-16 place-items-center rounded-full bg-[#0c2f73] text-white shadow-2xl hover:bg-[#103986]"
+                className="no-print fixed bottom-7 right-7 z-40 grid h-16 w-16 place-items-center rounded-full bg-[#0c2f73] text-white shadow-2xl hover:bg-[#103986]"
             >
                 <Bot size={30} />
             </button>
@@ -810,6 +993,24 @@ function DrawerMetric({ label, value }) {
     );
 }
 
+function ReportActionButton({ icon: Icon, label, onClick, disabled = false, primary = false }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            className={`inline-flex h-11 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-extrabold shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-wait disabled:translate-y-0 disabled:bg-gray-200 disabled:text-gray-500 ${
+                primary
+                    ? "bg-[#0c2f73] text-white hover:bg-[#103986]"
+                    : "border border-blue-100 bg-white text-[#17325c] hover:border-[#1e4db7] hover:bg-[#f8fcff] hover:text-[#1e4db7]"
+            }`}
+        >
+            <Icon size={17} />
+            {label}
+        </button>
+    );
+}
+
 function SummaryCard({ title, value, icon: Icon, color }) {
     return (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -828,6 +1029,11 @@ function SummaryCard({ title, value, icon: Icon, color }) {
             </h2>
         </div>
     );
+}
+
+function formatCsvValue(value) {
+    const text = String(value ?? "");
+    return `"${text.replace(/"/g, '""')}"`;
 }
 
 function ForecastTable({ title, data }) {

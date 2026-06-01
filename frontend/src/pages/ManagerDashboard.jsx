@@ -5,17 +5,16 @@ import {
     Bell,
     Boxes,
     Building2,
-    HelpCircle,
     Package,
     RefreshCcw,
     Settings,
     ShoppingCart,
     TrendingUp,
-    Truck,
     Users,
     AlertTriangle,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import ManagerSidebar from "../components/ManagerSidebar";
 
 const API_BASE = "http://localhost:5000";
 
@@ -169,61 +168,15 @@ export default function ManagerDashboard() {
     }
 
     return (
-        <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
-            <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
-                <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
-                    <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
-                        RetailPulse
-                    </div>
-
-                    <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
-                        <h4 className="font-extrabold text-[#16325b]">
-                            {user?.branch_name || "Branch"}
-                        </h4>
-                        <p className="mt-1 text-xs text-[#6f85a3]">
-                            Manager ID: {user?.user_id}
-                        </p>
-                    </div>
-
-                    <nav className="space-y-3">
-                        <button className="flex w-full items-center gap-4 rounded-2xl bg-white px-4 py-4 font-bold text-[#1e4db7] shadow">
-                            <BarChart3 size={18} />
-                            <span>Dashboard</span>
-                        </button>
-
-                        <button
-                            onClick={() => navigate("/manager-stock-transfer")}
-                            className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
-                        >
-                            <Truck size={18} />
-                            <span>Stock Transfer</span>
-                        </button>
-
-                        <button
-                            onClick={() => navigate("/manager-inventory")}
-                            className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
-                        >
-                            <Boxes size={18} />
-                            <span>Branch Inventory</span>
-                        </button>
-                    </nav>
-
-                    <div className="mt-auto space-y-3">
-                        <button
-                            onClick={() => setShowHelp(true)}
-                            className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]"
-                        >
-                            <HelpCircle size={17} />
-                            <span>Help Support</span>
-                        </button>
-                    </div>
-                </aside>
+        <div className="min-h-screen w-full overflow-x-hidden bg-[#eef6fb] text-[#17325c]">
+            <div className="flex h-screen w-full overflow-x-hidden">
+                <ManagerSidebar user={user} onOpenHelp={() => setShowHelp(true)} />
 
                 <motion.main
                     initial={{ opacity: 0, x: 30 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.35 }}
-                    className="min-w-0 overflow-y-auto px-8 py-6"
+                    className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-8 py-6"
                 >
                     <header className="mb-8 flex items-center gap-5">
                         <div>

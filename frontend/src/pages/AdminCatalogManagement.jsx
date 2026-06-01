@@ -599,7 +599,7 @@ export default function AdminCatalogManagement() {
                 >
                     <div className="grid max-h-[65vh] grid-cols-1 gap-4 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
                         {products
-                            .filter((item) => item.status === "ACTIVE")
+                            .filter((item) => item.status === "ACTIVE" && item.category_status === "ACTIVE")
                             .map((item) => (
                                 <div
                                     key={item.product_id}
@@ -631,7 +631,7 @@ export default function AdminCatalogManagement() {
                                 </div>
                             ))}
 
-                        {products.filter((item) => item.status === "ACTIVE").length === 0 && (
+                        {products.filter((item) => item.status === "ACTIVE" && item.category_status === "ACTIVE").length === 0 && (
                             <p className="col-span-full py-10 text-center font-semibold text-[#6f85a3]">
                                 No active products available for POS preview.
                             </p>
@@ -769,7 +769,14 @@ function ProductTable({ products, onEdit, onDelete }) {
                             </td>
 
                             <td className="px-4 py-4 font-semibold text-[#17325c]">
-                                {item.category_name}
+                                <div className="flex flex-col gap-2">
+                                    <span>{item.category_name}</span>
+                                    {item.status === "ACTIVE" && item.category_status === "INACTIVE" && (
+                                        <span className="w-fit rounded-full bg-orange-50 px-3 py-1 text-xs font-extrabold text-orange-600">
+                                            Category Inactive
+                                        </span>
+                                    )}
+                                </div>
                             </td>
 
                             <td className="px-4 py-4 font-extrabold text-[#0c2f73]">

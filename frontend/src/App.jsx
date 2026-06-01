@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useEffect } from "react";
 import setFavicon from "./utils/setFavicon";
 import Login from "./pages/Login";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import Staff from "./pages/Staff";
 import Manager from "./pages/Manager";
 import StaffAnalytics from "./pages/StaffAnalytics";
@@ -16,6 +18,9 @@ import AdminBranchManagement from "./pages/AdminBranchManagement";
 import AdminCatalogManagement from "./pages/AdminCatalogManagement";
 import AdminSalesMonitoring from "./pages/AdminSalesMonitoring";
 import AdminInventoryOverview from "./pages/AdminInventoryOverview";
+import AdminSupplierManagement from "./pages/AdminSupplierManagement";
+import AdminPurchaseManagement from "./pages/AdminPurchaseManagement";
+import AdminWarehouseManagement from "./pages/AdminWarehouseManagement";
 
 function App() {
 
@@ -28,6 +33,8 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/staff" element={<Staff />} />
         <Route path="/manager" element={<Manager />} />
@@ -42,6 +49,9 @@ function App() {
         <Route path="/admin/catalog" element={<AdminCatalogManagement />} />
         <Route path="/admin/sales" element={<AdminSalesMonitoring />} />  
         <Route path="/admin/inventory" element={<AdminInventoryOverview />} />
+        <Route path="/admin/warehouse" element={<AdminWarehouseManagement />} />
+        <Route path="/admin/suppliers" element={<AdminSupplierManagement />} />
+        <Route path="/admin/purchases" element={<AdminPurchaseManagement />} />
       </Routes>
     </BrowserRouter>
   );

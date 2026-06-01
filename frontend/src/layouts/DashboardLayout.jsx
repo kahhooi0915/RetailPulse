@@ -53,7 +53,7 @@ export default function DashboardLayout({
 
                             {modelText && (
                                 <p className="mt-1 text-xs font-bold text-[#1e4db7]">
-                                    Model: {modelText}
+                                    {modelText}
                                 </p>
                             )}
                         </div>
@@ -68,25 +68,29 @@ export default function DashboardLayout({
                                 </button>
                             )}
 
-                            <button
-                                onClick={onOpenNotifications}
-                                className="relative grid h-11 w-11 place-items-center rounded-full bg-white shadow"
-                            >
-                                <Bell size={18} />
+                            {onOpenNotifications && (
+                                <button
+                                    onClick={onOpenNotifications}
+                                    className="relative grid h-11 w-11 place-items-center rounded-full bg-white shadow"
+                                >
+                                    <Bell size={18} />
 
-                                {notificationCount > 0 && (
-                                    <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-red-500 text-[11px] font-bold text-white">
-                                        {notificationCount}
-                                    </span>
-                                )}
-                            </button>
+                                    {notificationCount > 0 && (
+                                        <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-red-500 text-[11px] font-bold text-white">
+                                            {notificationCount}
+                                        </span>
+                                    )}
+                                </button>
+                            )}
 
-                            <button
-                                onClick={onOpenSettings}
-                                className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
-                            >
-                                <Settings size={18} />
-                            </button>
+                            {onOpenSettings && (
+                                <button
+                                    onClick={onOpenSettings}
+                                    className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
+                                >
+                                    <Settings size={18} />
+                                </button>
+                            )}
 
                             <button
                                 onClick={() => setShowUserMenu(!showUserMenu)}

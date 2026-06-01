@@ -11,6 +11,8 @@ import {
     UserX,
     X,
     ShieldCheck,
+    Eye,
+    EyeOff,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -78,6 +80,7 @@ export default function AdminUserManagement() {
     const [showForm, setShowForm] = useState(false);
     const [editUser, setEditUser] = useState(null);
     const [formData, setFormData] = useState(emptyForm);
+    const [showPassword, setShowPassword] = useState(false);
 
     const [fieldErrors, setFieldErrors] = useState({
         email: "",
@@ -203,6 +206,7 @@ export default function AdminUserManagement() {
         setEditUser(null);
         setFormData(emptyForm);
         setFieldErrors({ email: "", phone: "", password: "" });
+        setShowPassword(false);
         setShowForm(true);
     };
 
@@ -219,6 +223,7 @@ export default function AdminUserManagement() {
         });
 
         setFieldErrors({ email: "", phone: "", password: "" });
+        setShowPassword(false);
         setShowForm(true);
     };
 
@@ -227,6 +232,7 @@ export default function AdminUserManagement() {
         setEditUser(null);
         setFormData(emptyForm);
         setFieldErrors({ email: "", phone: "", password: "" });
+        setShowPassword(false);
     };
 
     const handleFormChange = (field, value) => {
@@ -420,6 +426,7 @@ export default function AdminUserManagement() {
                 onRefresh={loadData}
                 onOpenSettings={() => setShowSettings(true)}
                 onOpenNotifications={() => setShowNotifications(true)}
+                onOpenChat={() => setShowHelp(true)}
                 notificationCount={inactiveUsers}
                 compactMode={settingsData.compactMode}
             >
@@ -668,11 +675,15 @@ export default function AdminUserManagement() {
 
                         <FormInput
                             label={editUser ? "Password (leave blank to keep current)" : "Password"}
-                            type="password"
+                            type={showPassword ? "text" : "password"}
                             value={formData.password}
                             onChange={(value) => handleFormChange("password", value)}
                             placeholder="Minimum 8 characters and one special character"
                             error={fieldErrors.password}
+                            showPasswordToggle
+                            isPasswordVisible={showPassword}
+                            onPasswordPressStart={() => setShowPassword(true)}
+                            onPasswordPressEnd={() => setShowPassword(false)}
                         />
 
                         <div>
@@ -833,14 +844,47 @@ export default function AdminUserManagement() {
             {showHelp && (
                 <Modal
                     onClose={() => setShowHelp(false)}
-                    title="Help Support"
-                    subtitle="User management help guide."
+                    title="User Management Help Guide"
+                    subtitle="Manage user accounts, roles, and branch assignments."
                 >
-                    <div className="space-y-4 text-sm text-[#17325c]">
-                        <p>• Use Add User to register staff, manager, or admin accounts.</p>
-                        <p>• Staff and manager accounts must be assigned to a branch.</p>
-                        <p>• System admin accounts do not need a branch.</p>
-                        <p>• Use activate/deactivate instead of deleting accounts used by sales or transfers.</p>
+                    <div className="space-y-5">
+                        {/* Main Capabilities */}
+                        <div className="rounded-2xl bg-[#eef6fb] p-5">
+                            <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wide text-[#1e4db7]">
+                                What You Can Do
+                            </h3>
+
+                            <ul className="space-y-3 text-sm text-[#17325c]">
+                                <li>• Register new System Admin, Inventory Manager, and Branch Staff accounts.</li>
+                                <li>• Update user details such as name, email, phone number, and role.</li>
+                                <li>• Assign branch access for managers and staff.</li>
+                                <li>• Activate or deactivate user accounts.</li>
+                                <li>• Delete user accounts that are no longer needed.</li>
+                                <li>• Search and filter users by role and status.</li>
+                            </ul>
+                        </div>
+
+                        {/* Important Rules */}
+                        <div className="rounded-2xl bg-[#f8fcff] p-5">
+                            <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wide text-[#07102f]">
+                                Important Rules
+                            </h3>
+
+                            <ul className="space-y-3 text-sm text-[#6f85a3] leading-6">
+                                <li>• System Admin accounts do not require a branch assignment.</li>
+                                <li>• Inventory Managers and Branch Staff must be assigned to a branch.</li>
+                                <li>• Only one active Inventory Manager is allowed per branch.</li>
+                                <li>• It is recommended to deactivate accounts instead of deleting users with historical records.</li>
+                            </ul>
+                        </div>
+
+                        {/* Footer Note */}
+                        <div className="rounded-2xl bg-amber-50 p-4">
+                            <p className="text-sm leading-6 text-amber-700">
+                                Deactivating a user preserves related sales and stock transfer history,
+                                while preventing the user from logging into the system.
+                            </p>
+                        </div>
                     </div>
                 </Modal>
             )}
@@ -930,6 +974,10 @@ function FormInput({
     placeholder,
     type = "text",
     error,
+    showPasswordToggle = false,
+    isPasswordVisible = false,
+    onPasswordPressStart,
+    onPasswordPressEnd,
 }) {
     return (
         <div>
@@ -937,14 +985,34 @@ function FormInput({
                 {label}
             </label>
 
-            <input
-                type={type}
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                placeholder={placeholder}
-                className={`w-full rounded-2xl px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb] ${error ? "bg-red-50 ring-2 ring-red-300" : "bg-[#eef6fb]"
-                    }`}
-            />
+            <div className="relative">
+                <input
+                    type={type}
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    className={`w-full rounded-2xl py-3 pl-4 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb] ${showPasswordToggle ? "pr-12" : "pr-4"} ${error ? "bg-red-50 ring-2 ring-red-300" : "bg-[#eef6fb]"
+                        }`}
+                />
+
+                {showPasswordToggle && (
+                    <button
+                        type="button"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            onPasswordPressStart?.();
+                        }}
+                        onMouseUp={onPasswordPressEnd}
+                        onMouseLeave={onPasswordPressEnd}
+                        onTouchStart={onPasswordPressStart}
+                        onTouchEnd={onPasswordPressEnd}
+                        className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#8aa0bb] transition duration-300 hover:text-[#0c2f73]"
+                        aria-label={isPasswordVisible ? "Hide password" : "Show password"}
+                    >
+                        {isPasswordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                )}
+            </div>
 
             {error && (
                 <p className="mt-2 text-xs font-bold text-red-500">

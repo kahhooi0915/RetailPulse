@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Mail, Lock, ShieldCheck } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Eye, EyeOff, Mail, Lock, ShieldCheck } from "lucide-react";
 import api from "../api/axios";
 import setFavicon from "../utils/setFavicon";
+import retailBg from "../assets/retail-bg.jpg";
 
 export default function Login() {
   const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -42,67 +44,59 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div
+      className="relative min-h-screen overflow-hidden bg-slate-100 bg-cover bg-center bg-no-repeat"
+      style={{ backgroundImage: `url(${retailBg})` }}
+    >
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-900/45 via-blue-950/30 to-slate-100/25" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.55),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(96,165,250,0.26),transparent_34%)]" />
 
-      {/* LEFT PANEL */}
-      <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-[#061b3a] via-[#062b54] to-[#081326] text-white p-12 flex-col justify-between">
-        
-        <div>
-          <h1 className="text-2xl font-bold">RetailPulse</h1>
-
-          <div className="mt-20">
-            <h2 className="text-5xl font-extrabold leading-tight">
-              Precision in every
-              <span className="block text-cyan-400">pixel.</span>
-            </h2>
-
-            <p className="mt-6 text-sm text-gray-300 max-w-sm">
-              Access the master dashboard for high-stakes inventory auditing and real-time logistics analytics.
-            </p>
-          </div>
+      {success && (
+        <div className="fixed left-1/2 top-6 z-50 w-[300px] max-w-[calc(100vw-2rem)] rounded-xl border border-emerald-200 bg-white/95 px-6 py-3.5 text-center text-base font-semibold text-emerald-700 shadow-xl shadow-slate-900/15 backdrop-blur-md animate-[toastSlideDown_450ms_ease-out_both]">
+          Welcome Back!
         </div>
+      )}
 
-        <div className="flex items-center gap-3">
-          <div className="bg-white/10 p-3 rounded">
-            <ShieldCheck className="text-cyan-300" />
-          </div>
-          <div>
-            <p className="font-semibold text-sm">Enterprise Security</p>
-            <p className="text-xs text-gray-300">
-              End-to-end encrypted data handling.
-            </p>
-          </div>
-        </div>
-      </div>
+      <style>
+        {`
+          @keyframes toastSlideDown {
+            from {
+              opacity: 0;
+              transform: translate(-50%, -16px);
+            }
+            to {
+              opacity: 1;
+              transform: translate(-50%, 0);
+            }
+          }
+        `}
+      </style>
 
-      {/* RIGHT PANEL */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center bg-gray-100 px-6">
-        <div className="w-full max-w-md">
-
-          {success && (
-            <div className="fixed top-5 right-5 bg-green-600 text-white px-4 py-2 rounded-xl shadow animate-slide-in">
-              Welcome Back!
+      <main className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10 sm:px-6 lg:px-8">
+        <section className="w-full max-w-md rounded-xl border border-white/60 bg-white/85 p-6 text-slate-900 shadow-2xl shadow-slate-900/20 backdrop-blur-xl transition duration-300 hover:bg-white/90 sm:p-8">
+          <div className="mb-8 text-center">
+            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 shadow-sm">
+              <ShieldCheck size={28} className="text-blue-700" />
             </div>
-          )}
+            <h1 className="text-4xl font-bold tracking-tight text-slate-950 sm:text-5xl">
+              RetailPulse
+            </h1>
+            <p className="mt-3 text-sm font-medium leading-6 text-slate-600">
+              Multi-Branch Inventory & Sales Analytics System
+            </p>
+          </div>
 
-          <h2 className="text-3xl font-bold text-gray-800">Welcome Back</h2>
-          <p className="text-sm text-gray-500 mt-2">
-            Please enter your credentials to access the portal.
-          </p>
-
-          <form onSubmit={handleLogin} className="mt-8 space-y-4">
-
-            {/* EMAIL */}
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="text-xs font-bold text-gray-600 uppercase">
+              <label className="text-xs font-bold uppercase tracking-[0.16em] text-slate-600">
                 Email
               </label>
 
-              <div className="flex items-center bg-blue-100 mt-2 px-3 py-2 rounded-xl">
-                <Mail size={16} className="text-gray-400" />
+              <div className="mt-2 flex items-center rounded-lg border border-slate-200 bg-white/90 px-4 py-3 shadow-sm transition duration-300 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
+                <Mail size={18} className="text-blue-500" />
                 <input
                   type="email"
-                  className="bg-transparent outline-none ml-2 w-full text-sm"
+                  className="ml-3 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   placeholder="example@email.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -110,55 +104,79 @@ export default function Login() {
               </div>
             </div>
 
-            {/* PASSWORD */}
             <div>
-              <div className="flex justify-between">
-                <label className="text-xs font-bold text-gray-600 uppercase">
+              <div className="flex items-center justify-between gap-4">
+                <label className="text-xs font-bold uppercase tracking-[0.16em] text-slate-600">
                   Password
                 </label>
-                <span className="text-xs text-orange-500 cursor-pointer">
+                <Link
+                  to="/forgot-password"
+                  className="cursor-pointer text-xs font-semibold text-blue-700 transition duration-300 hover:text-blue-900"
+                >
                   Forgot password?
-                </span>
+                </Link>
               </div>
 
-              <div className="flex items-center bg-blue-100 mt-2 px-3 py-2 rounded-xl">
-                <Lock size={16} className="text-gray-400" />
+              <div className="mt-2 flex items-center rounded-lg border border-slate-200 bg-white/90 px-4 py-3 shadow-sm transition duration-300 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
+                <Lock size={18} className="text-blue-500" />
                 <input
-                  type="password"
-                  className="bg-transparent outline-none ml-2 w-full text-sm"
+                  type={showPassword ? "text" : "password"}
+                  className="ml-3 w-full bg-transparent pr-2 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setShowPassword(true);
+                  }}
+                  onMouseUp={() => setShowPassword(false)}
+                  onMouseLeave={() => setShowPassword(false)}
+                  onTouchStart={() => setShowPassword(true)}
+                  onTouchEnd={() => setShowPassword(false)}
+                  className="flex items-center justify-center text-slate-400 transition duration-300 hover:text-blue-600"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
 
-            {/* REMEMBER */}
-            <label className="flex items-center text-xs text-gray-500 gap-2">
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-              />
-              Remember this device
-            </label>
+            <div className="flex items-center justify-between gap-4">
+              <label className="flex cursor-pointer items-center gap-3 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 bg-white text-blue-600 accent-blue-600 focus:ring-blue-200"
+                />
+                Remember this device
+              </label>
+            </div>
 
-            {/* ERROR */}
             {error && (
-              <div className="text-red-500 text-sm">{error}</div>
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                {error}
+              </div>
             )}
 
-            {/* BUTTON */}
-            <button className="w-full bg-[#062b63] text-white py-3 rounded font-semibold hover:bg-[#041f49]">
-              Log In →
+            <button className="group mt-2 w-full rounded-lg bg-gradient-to-r from-blue-700 to-blue-600 px-5 py-3.5 text-sm font-bold uppercase tracking-[0.14em] text-white shadow-lg shadow-blue-900/20 transition duration-300 hover:-translate-y-0.5 hover:from-blue-800 hover:to-blue-700 hover:shadow-blue-900/30 focus:outline-none focus:ring-4 focus:ring-blue-200">
+              <span className="inline-flex items-center justify-center gap-2">
+                Log In
+                <span className="transition duration-300 group-hover:translate-x-1">
+                  -&gt;
+                </span>
+              </span>
             </button>
           </form>
 
-          <p className="text-center text-xs text-gray-500 mt-6">
-           Need an account? Contact your administrator{" "}
+          <p className="mt-7 text-center text-xs font-medium text-slate-500">
+            Need an account? Contact your administrator
           </p>
-
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }

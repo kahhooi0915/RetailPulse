@@ -23,11 +23,13 @@ import {
   Printer,
   Download,
   Mail,
+  ChevronRight,
 } from "lucide-react";
 import { motion } from "framer-motion";//for page transition animations
 import { downloadPDF } from "../utils/downloadPDF";
 
 const API_BASE = "http://localhost:5000";
+const DEFAULT_PRODUCT_IMAGE_URL = `${API_BASE}/static/images/products/default.webp`;
 
 export default function Staff() {
   const navigate = useNavigate();
@@ -53,8 +55,9 @@ export default function Staff() {
   const [completedSale, setCompletedSale] = useState(null);
   const [showEmailPopup, setShowEmailPopup] = useState(false);
   const [customerEmail, setCustomerEmail] = useState("");
+  const [sidebarPinned, setSidebarPinned] = useState(false);
   const [sidebarHovered, setSidebarHovered] = useState(false); // hover-expand sidebar
-  const sidebarOpen = sidebarHovered;
+  const sidebarOpen = sidebarPinned || sidebarHovered;
   //Settings section states
   const [showSettings, setShowSettings] = useState(false);
   const [taxRate, setTaxRate] = useState(
@@ -94,7 +97,7 @@ export default function Staff() {
 
       const [categoryRes, productRes, inventoryRes] = await Promise.all([
         fetch(`${API_BASE}/admin/categories`),
-        fetch(`${API_BASE}/admin/products`),
+        fetch(`${API_BASE}/admin/products?available=1`),
         fetch(`${API_BASE}/admin/inventory`),
       ]);
 
@@ -149,9 +152,31 @@ export default function Staff() {
   }, [productsWithStock, activeCategory, searchTerm]);
 
   const getImageUrl = (imagePath) => {
-    if (!imagePath) return "https://placehold.co/600x400?text=No+Image";
-    if (imagePath.startsWith("http")) return imagePath;
-    return `${API_BASE}${imagePath}`;
+    const value = String(imagePath || "").trim();
+
+    if (!value || value.toLowerCase() === "null" || value.toLowerCase() === "undefined") {
+      return DEFAULT_PRODUCT_IMAGE_URL;
+    }
+
+    if (value.startsWith("http")) return value;
+
+    const normalized = value.replace(/\\/g, "/");
+
+    if (normalized.startsWith("/")) {
+      return `${API_BASE}${normalized}`;
+    }
+
+    const staticPath = normalized.includes("static/images/products/")
+      ? normalized.slice(normalized.indexOf("static/images/products/"))
+      : `static/images/products/${normalized.split("/").pop()}`;
+
+    return `${API_BASE}/${staticPath}`;
+  };
+
+  const handleProductImageError = (event) => {
+    if (event.currentTarget.src !== DEFAULT_PRODUCT_IMAGE_URL) {
+      event.currentTarget.src = DEFAULT_PRODUCT_IMAGE_URL;
+    }
   };
 
   const addToCart = (product) => {
@@ -437,6 +462,18 @@ export default function Staff() {
                 RetailPulse
               </div>
             )}
+
+            <button
+              onClick={() => setSidebarPinned(!sidebarPinned)}
+              className="grid h-9 w-9 place-items-center rounded-full bg-white text-[#1e4db7] shadow"
+              title={sidebarPinned ? "Collapse sidebar" : "Pin sidebar"}
+            >
+              <ChevronRight
+                size={18}
+                className={`transition-transform duration-300 ${sidebarPinned ? "rotate-180" : ""
+                  }`}
+              />
+            </button>
           </div>
 
           {/* Branch Info */}
@@ -607,12 +644,9 @@ export default function Staff() {
                     >
                       <div className="relative h-[180px] overflow-hidden bg-slate-100">
                         <img
-                          src={
-                            product.product_image?.startsWith("http")
-                              ? product.product_image
-                              : `http://localhost:5000${product.product_image}`
-                          }
+                          src={getImageUrl(product.product_image)}
                           alt={product.product_name}
+                          onError={handleProductImageError}
                           className={`h-full w-full object-cover transition ${isOutOfStock ? "grayscale" : "hover:scale-105"
                             }`}
                         />
@@ -696,12 +730,9 @@ export default function Staff() {
                   className="grid grid-cols-[56px_1fr_auto] items-center gap-3 rounded-[18px] bg-[#f8fbfe] p-3 border border-[#edf3f8]"
                 >
                   <img
-                    src={
-                      item.product_image?.startsWith("http")
-                        ? item.product_image
-                        : `http://localhost:5000${item.product_image}`
-                    }
+                    src={getImageUrl(item.product_image)}
                     alt={item.product_name}
+                    onError={handleProductImageError}
                     className="h-14 w-14 rounded-2xl object-cover"
                   />
 

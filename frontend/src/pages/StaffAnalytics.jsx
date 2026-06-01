@@ -14,6 +14,7 @@ import {
   Trophy,
   Boxes,
   CheckCircle,
+  ChevronRight,
 } from "lucide-react";
 
 import {
@@ -44,6 +45,9 @@ export default function StaffAnalytics() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const sidebarOpen = sidebarPinned || sidebarHovered;
   //Settings states
   const [showSettings, setShowSettings] = useState(false);
   const [eyeCareMode, setEyeCareMode] = useState(
@@ -255,7 +259,9 @@ export default function StaffAnalytics() {
     return stockTransfers.some(
       (transfer) =>
         Number(transfer.to_branch_id) === Number(user?.branch_id) &&
-        transfer.status === "PENDING"
+        transfer.status === "PENDING" &&
+        Array.isArray(transfer.product_ids) &&
+        transfer.product_ids.some((id) => Number(id) === Number(productId))
     );
   };
 
@@ -368,42 +374,81 @@ export default function StaffAnalytics() {
           : "bg-[#eef6fb] text-[#17325c]"
         }`}
     >
-      <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
+      <div
+        className={`grid h-full transition-all duration-300 ${sidebarOpen
+            ? "grid-cols-[230px_minmax(0,1fr)]"
+            : "grid-cols-[86px_minmax(0,1fr)]"
+          }`}
+      >
         {/* SIDEBAR */}
-        <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
-          <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
-            RetailPulse
+        <aside
+          onMouseEnter={() => setSidebarHovered(true)}
+          onMouseLeave={() => setSidebarHovered(false)}
+          className={`flex flex-col bg-[#d9edf8] py-6 border-r border-blue-100 transition-all duration-300 ${sidebarOpen ? "px-5" : "px-3"
+            }`}
+        >
+          <div
+            className={`mb-8 flex items-center ${!sidebarOpen ? "justify-center" : "justify-between"
+              }`}
+          >
+            {!!sidebarOpen && (
+              <div className="text-2xl font-extrabold text-[#1e4db7]">
+                RetailPulse
+              </div>
+            )}
+
+            <button
+              onClick={() => setSidebarPinned(!sidebarPinned)}
+              className="grid h-9 w-9 place-items-center rounded-full bg-white text-[#1e4db7] shadow"
+              title={sidebarPinned ? "Collapse sidebar" : "Pin sidebar"}
+            >
+              <ChevronRight
+                size={18}
+                className={`transition-transform duration-300 ${sidebarPinned ? "rotate-180" : ""
+                  }`}
+              />
+            </button>
           </div>
 
-          <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
-            <h4 className="font-extrabold text-[#16325b]">
-              {user?.branch_name || "Main Branch"}
-            </h4>
-            <p className="mt-1 text-xs text-[#6f85a3]">
-              Staff ID: {user?.user_id}
-            </p>
-          </div>
+          {!!sidebarOpen && (
+            <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
+              <h4 className="font-extrabold text-[#16325b]">
+                {user?.branch_name || "Main Branch"}
+              </h4>
+              <p className="mt-1 text-xs text-[#6f85a3]">
+                Staff ID: {user?.user_id}
+              </p>
+            </div>
+          )}
 
           <nav className="space-y-3">
             <button
               onClick={() => navigate("/staff")}
-              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 font-semibold text-[#254e7a] hover:bg-white/70 ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
             >
               <ShoppingCart size={18} />
-              <span>POS Terminal</span>
+              {!!sidebarOpen && <span>POS Terminal</span>}
             </button>
 
-            <button className="flex w-full items-center gap-4 rounded-2xl bg-white px-4 py-4 font-bold text-[#1e4db7] shadow">
+            <button
+              className={`flex w-full items-center rounded-2xl bg-white py-4 font-bold text-[#1e4db7] shadow ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
+            >
               <BarChart3 size={18} />
-              <span>Analytics</span>
+              {!!sidebarOpen && <span>Analytics</span>}
             </button>
 
           </nav>
 
           <div className="mt-auto space-y-3">
-            <button onClick={() => setShowHelp(true)} className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]">
+            <button
+              onClick={() => setShowHelp(true)}
+              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 text-sm font-semibold text-[#254e7a] ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
+            >
               <HelpCircle size={17} />
-              <span>Help Support</span>
+              {!!sidebarOpen && <span>Help Support</span>}
             </button>
 
           </div>

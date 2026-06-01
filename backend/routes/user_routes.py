@@ -1,5 +1,7 @@
 from flask import Blueprint, request, jsonify
 import re
+from werkzeug.security import generate_password_hash
+
 from db import get_connection
 
 user_bp = Blueprint("user_bp", __name__)
@@ -190,7 +192,7 @@ def admin_add_user():
             INSERT INTO users (name, email, phone, password, role, branch_id, status)
             VALUES (%s, %s, %s, %s, %s, %s, 'ACTIVE')
             RETURNING user_id, user_code
-        """, (name, email, phone, password, role, branch_id))
+        """, (name, email, phone, generate_password_hash(password), role, branch_id))
 
         new_user = cur.fetchone()
 
@@ -246,7 +248,9 @@ def admin_update_user(user_id):
             return jsonify({"message": "User not found"}), 404
 
         if not password or not str(password).strip():
-            password = existing_user[1]
+            password_to_store = existing_user[1]
+        else:
+            password_to_store = generate_password_hash(password)
 
         if role == "SYSTEM_ADMIN":
             branch_id = None
@@ -323,7 +327,7 @@ def admin_update_user(user_id):
                 role = %s,
                 branch_id = %s
             WHERE user_id = %s
-        """, (name, email, phone, password, role, branch_id, user_id))
+        """, (name, email, phone, password_to_store, role, branch_id, user_id))
 
         conn.commit()
         cur.close()

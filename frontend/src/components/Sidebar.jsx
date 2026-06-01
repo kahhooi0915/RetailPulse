@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { sidebarItems } from "../data/sidebarItems";
 
 export default function Sidebar({ user, onOpenChat }) {
@@ -9,9 +9,17 @@ export default function Sidebar({ user, onOpenChat }) {
 
     const [sidebarPinned, setSidebarPinned] = useState(false);
     const [sidebarHovered, setSidebarHovered] = useState(false);
+    const [openGroups, setOpenGroups] = useState({});
 
     const sidebarOpen = sidebarPinned || sidebarHovered;
     const items = sidebarItems[user?.role] || [];
+
+    const toggleGroup = (label) => {
+        setOpenGroups((prev) => ({
+            ...prev,
+            [label]: !prev[label],
+        }));
+    };
 
     return (
         <aside
@@ -51,34 +59,124 @@ export default function Sidebar({ user, onOpenChat }) {
                 </div>
             )}
 
-            <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
-                {items.map((item) => (
-                    <SidebarButton
-                        key={item.label}
-                        sidebarOpen={sidebarOpen}
-                        icon={item.icon}
-                        label={item.label}
-                        active={item.path === location.pathname}
-                        onClick={() => {
-                            if (item.action === "chat") {
-                                onOpenChat?.();
-                            } else if (item.path) {
-                                navigate(item.path);
+            <nav className="min-h-0 flex flex-col flex-1 overflow-hidden">
+                {/* Main Menu Items */}
+                <div className="flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
+                    {items
+                        .filter((item) => item.action !== "chat")
+                        .map((item) => {
+                            const hasChildren = Array.isArray(item.children);
+                            const groupOpen = openGroups[item.label];
+
+                            const groupActive =
+                                hasChildren &&
+                                item.children.some(
+                                    (child) => child.path === location.pathname
+                                );
+
+                            if (hasChildren) {
+                                return (
+                                    <div key={item.label}>
+                                        <SidebarButton
+                                            sidebarOpen={sidebarOpen}
+                                            icon={item.icon}
+                                            label={item.label}
+                                            active={groupActive}
+                                            isGroup
+                                            groupOpen={groupOpen}
+                                            onClick={() => {
+                                                if (!sidebarOpen) {
+                                                    setSidebarHovered(true);
+                                                }
+                                                toggleGroup(item.label);
+                                            }}
+                                        />
+
+                                        {sidebarOpen && groupOpen && (
+                                            <div className="mt-2 space-y-2 pl-4">
+                                                {item.children.map((child) => (
+                                                    <SidebarButton
+                                                        key={child.label}
+                                                        sidebarOpen={sidebarOpen}
+                                                        icon={child.icon}
+                                                        label={child.label}
+                                                        active={
+                                                            child.path ===
+                                                            location.pathname
+                                                        }
+                                                        isChild
+                                                        onClick={() => {
+                                                            if (
+                                                                child.action === "chat"
+                                                            ) {
+                                                                onOpenChat?.();
+                                                            } else if (child.path) {
+                                                                navigate(child.path);
+                                                            }
+                                                        }}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
                             }
-                        }}
-                    />
-                ))}
+
+                            return (
+                                <SidebarButton
+                                    key={item.label}
+                                    sidebarOpen={sidebarOpen}
+                                    icon={item.icon}
+                                    label={item.label}
+                                    active={item.path === location.pathname}
+                                    onClick={() => {
+                                        if (item.action === "chat") {
+                                            onOpenChat?.();
+                                        } else if (item.path) {
+                                            navigate(item.path);
+                                        }
+                                    }}
+                                />
+                            );
+                        })}
+                </div>
+
+                {/* Help Support at Bottom */}
+                <div className="pt-4 border-t border-blue-100">
+                    {items
+                        .filter((item) => item.action === "chat")
+                        .map((item) => (
+                            <SidebarButton
+                                key={item.label}
+                                sidebarOpen={sidebarOpen}
+                                icon={item.icon}
+                                label={item.label}
+                                active={false}
+                                onClick={() => onOpenChat?.()}
+                            />
+                        ))}
+                </div>
             </nav>
         </aside>
     );
 }
 
-function SidebarButton({ icon: Icon, label, active, onClick, sidebarOpen }) {
+function SidebarButton({
+    icon: Icon,
+    label,
+    active,
+    onClick,
+    sidebarOpen,
+    isGroup = false,
+    groupOpen = false,
+    isChild = false,
+}) {
     return (
         <button
             onClick={onClick}
             title={label}
-            className={`flex w-full items-center rounded-2xl py-4 text-left transition ${sidebarOpen ? "gap-3 px-4 justify-start" : "justify-center px-0"
+            className={`flex w-full items-center rounded-2xl text-left transition ${sidebarOpen ? "gap-3 px-4 justify-start" : "justify-center px-0"
+                } ${isChild ? "py-3" : "py-4"
                 } ${active
                     ? "bg-white font-bold text-[#1e4db7] shadow"
                     : "bg-white/30 font-semibold text-[#254e7a] hover:bg-white/70"
@@ -87,9 +185,19 @@ function SidebarButton({ icon: Icon, label, active, onClick, sidebarOpen }) {
             <Icon size={18} className="shrink-0" />
 
             {sidebarOpen && (
-                <span className="min-w-0 truncate text-sm">
-                    {label}
-                </span>
+                <>
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                        {label}
+                    </span>
+
+                    {isGroup && (
+                        <ChevronDown
+                            size={16}
+                            className={`shrink-0 transition-transform duration-300 ${groupOpen ? "rotate-180" : ""
+                                }`}
+                        />
+                    )}
+                </>
             )}
         </button>
     );
