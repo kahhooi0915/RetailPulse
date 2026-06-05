@@ -8,7 +8,6 @@ import {
   BarChart3,
   User,
   LogOut,
-  HelpCircle,
   Plus,
   Minus,
   Trash2,
@@ -27,9 +26,52 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";//for page transition animations
 import { downloadPDF } from "../utils/downloadPDF";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 const DEFAULT_PRODUCT_IMAGE_URL = `${API_BASE}/static/images/products/default.webp`;
+const HOLD_ORDERS_STORAGE_KEY = "holdOrders";
+const HOLD_ORDER_EXPIRY_MS = 3 * 60 * 60 * 1000;
+
+const getStoredHoldOrders = () => {
+  try {
+    const storedOrders = JSON.parse(
+      localStorage.getItem(HOLD_ORDERS_STORAGE_KEY) || "[]"
+    );
+
+    return Array.isArray(storedOrders) ? storedOrders : [];
+  } catch {
+    localStorage.setItem(HOLD_ORDERS_STORAGE_KEY, JSON.stringify([]));
+    return [];
+  }
+};
+
+const getActiveHoldOrders = () => {
+  const now = Date.now();
+  const holdOrders = getStoredHoldOrders();
+  const activeOrders = holdOrders.filter(
+    (order) => Number(order.expiresAt || 0) > now
+  );
+
+  if (activeOrders.length !== holdOrders.length) {
+    localStorage.setItem(HOLD_ORDERS_STORAGE_KEY, JSON.stringify(activeOrders));
+  }
+
+  return activeOrders;
+};
+
+const formatHoldExpiry = (expiresAt) => {
+  const remainingMs = Math.max(Number(expiresAt || 0) - Date.now(), 0);
+  const remainingMinutes = Math.ceil(remainingMs / 60000);
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+
+  if (hours > 0) {
+    return `Expires in ${hours}h ${minutes}m`;
+  }
+
+  return `Expires in ${remainingMinutes}m`;
+};
 
 export default function Staff() {
   const navigate = useNavigate();
@@ -47,6 +89,7 @@ export default function Staff() {
   const [showDiscountPad, setShowDiscountPad] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [showHoldList, setShowHoldList] = useState(false);
+  const [heldOrders, setHeldOrders] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -282,27 +325,37 @@ export default function Staff() {
     navigate("/");
   };
 
+  const openHoldList = () => {
+    setHeldOrders(getActiveHoldOrders());
+    setShowHoldList(true);
+  };
+
   const handlePrintHold = () => {
   if (cart.length === 0) {
     alert("Cart is empty.");
     return;
   }
 
-  const holdOrders = JSON.parse(sessionStorage.getItem("holdOrders")) || [];
+  const holdOrders = getActiveHoldOrders();
+  const holdDate = new Date();
+  const now = holdDate.getTime();
 
   const newOrder = {
-    id: Date.now(),
+    id: now,
     items: cart,
     subtotal,
     discountPercent,
     discountAmount,
     tax,
     total,
-    created_at: new Date().toLocaleString(),
+    holdTime: now,
+    expiresAt: now + HOLD_ORDER_EXPIRY_MS,
+    created_at: holdDate.toLocaleString(),
   };
 
   holdOrders.push(newOrder);
-  sessionStorage.setItem("holdOrders", JSON.stringify(holdOrders));
+  localStorage.setItem(HOLD_ORDERS_STORAGE_KEY, JSON.stringify(holdOrders));
+  setHeldOrders(holdOrders);
 
   setCart([]);
   setDiscountInput("");
@@ -311,11 +364,12 @@ export default function Staff() {
 };
 
     const resumeHoldOrder = (orderId) => {
-    const holdOrders = JSON.parse(sessionStorage.getItem("holdOrders")) || [];
+    const holdOrders = getActiveHoldOrders();
 
     const selectedOrder = holdOrders.find((order) => order.id === orderId);
 
     if (!selectedOrder) {
+        setHeldOrders(holdOrders);
         alert("Hold order not found.");
         return;
     }
@@ -324,18 +378,18 @@ export default function Staff() {
     setDiscountInput(String(selectedOrder.discountPercent || ""));
 
     const updatedOrders = holdOrders.filter((order) => order.id !== orderId);
-    sessionStorage.setItem("holdOrders", JSON.stringify(updatedOrders));
+    localStorage.setItem(HOLD_ORDERS_STORAGE_KEY, JSON.stringify(updatedOrders));
+    setHeldOrders(updatedOrders);
 
     setShowHoldList(false);
     };
 
     const deleteHoldOrder = (orderId) => {
-    const holdOrders = JSON.parse(sessionStorage.getItem("holdOrders")) || [];
+    const holdOrders = getActiveHoldOrders();
     const updatedOrders = holdOrders.filter((order) => order.id !== orderId);
 
-    sessionStorage.setItem("holdOrders", JSON.stringify(updatedOrders));
-    setShowHoldList(false);
-    setTimeout(() => setShowHoldList(true), 0);
+    localStorage.setItem(HOLD_ORDERS_STORAGE_KEY, JSON.stringify(updatedOrders));
+    setHeldOrders(updatedOrders);
     };
 
   const completeTransaction = () => {
@@ -510,17 +564,6 @@ export default function Staff() {
             </button>
           </nav>
 
-          {/* Help Support */}
-          <div className="mt-auto space-y-3">
-            <button
-              onClick={() => setShowHelp(!showHelp)}
-              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 text-sm font-semibold text-[#254e7a] transition-all duration-300 hover:-translate-y-1 hover:bg-white/70 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
-                }`}
-            >
-              <HelpCircle size={17} />
-              {!!sidebarOpen && <span>Help Support</span>}
-            </button>
-          </div>
         </aside>
 
         {/* MAIN CONTENT */}
@@ -675,7 +718,7 @@ export default function Staff() {
 
                         <div className="mt-4 flex items-center justify-between gap-2">
                           <strong className="text-lg font-extrabold text-[#103a72]">
-                            RM {Number(product.selling_price).toFixed(2)}
+                            {formatCurrency(product.selling_price)}
                           </strong>
 
                           <span
@@ -768,7 +811,7 @@ export default function Staff() {
 
                   <div className="flex flex-col items-end gap-2">
                     <strong className="whitespace-nowrap text-sm text-[#17325c]">
-                      RM {item.subtotal.toFixed(2)}
+                      {formatCurrency(item.subtotal)}
                     </strong>
 
                     <button
@@ -787,26 +830,26 @@ export default function Staff() {
             <div className="mb-3 flex justify-between text-sm text-[#6f84a1]">
               <span>Subtotal ({cart.length} items)</span>
               <strong className="text-[#17325c]">
-                RM {subtotal.toFixed(2)}
+                {formatCurrency(subtotal)}
               </strong>
             </div>
 
             <div className="mb-3 flex justify-between text-sm text-[#6f84a1]">
             <span>Discount ({discountPercent}%)</span>
             <strong className="text-red-500">
-                - RM {discountAmount.toFixed(2)}
+                - {formatCurrency(discountAmount)}
             </strong>
             </div>
 
             <div className="mb-4 flex justify-between text-sm text-[#6f84a1]">
               <span>Tax ({taxRate}%)</span>
-              <strong className="text-[#17325c]">RM {tax.toFixed(2)}</strong>
+              <strong className="text-[#17325c]">{formatCurrency(tax)}</strong>
             </div>
 
             <div className="mb-5 flex justify-between border-t border-dashed border-[#cde0ec] pt-4 text-lg font-extrabold">
               <span>Total Amount</span>
               <strong className="text-xl text-orange-600">
-                RM {total.toFixed(2)}
+                {formatCurrency(total)}
               </strong>
             </div>
 
@@ -820,7 +863,7 @@ export default function Staff() {
 
             <div className="grid grid-cols-2 gap-3">
                 <button
-                onClick={() => setShowHoldList(true)}
+                onClick={openHoldList}
                 className="flex items-center justify-center gap-2 rounded-full bg-[#ecf5fa] px-3 py-3 text-xs font-extrabold text-[#2a577b]"
                 >
                 <ReceiptText size={15} />
@@ -1037,13 +1080,13 @@ export default function Staff() {
                 Hold Current Cart
                 </button>
 
-                {JSON.parse(sessionStorage.getItem("holdOrders") || "[]").length === 0 ? (
+                {heldOrders.length === 0 ? (
                     <div className="rounded-2xl bg-[#eef6fb] p-5 text-center text-sm font-semibold text-[#6f84a1]">
                     No hold orders found.
                     </div>
                 ) : (
                     <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-                    {JSON.parse(sessionStorage.getItem("holdOrders") || "[]").map(
+                    {heldOrders.map(
                         (order) => (
                         <div
                             key={order.id}
@@ -1060,13 +1103,17 @@ export default function Staff() {
                             </div>
 
                             <p className="font-extrabold text-orange-600">
-                                RM {Number(order.total || 0).toFixed(2)}
+                                {formatCurrency(order.total)}
                             </p>
                             </div>
 
                             <p className="mb-3 text-sm text-[#6f84a1]">
                             Items: {order.items.length} | Discount:{" "}
                             {order.discountPercent || 0}%
+                            </p>
+
+                            <p className="mb-3 text-sm font-semibold text-[#254e7a]">
+                            {formatHoldExpiry(order.expiresAt)}
                             </p>
 
                             <div className="grid grid-cols-2 gap-3">
@@ -1271,23 +1318,23 @@ export default function Staff() {
 
             <div className="mb-3 flex justify-between">
               <span>Subtotal</span>
-              <strong>RM {subtotal.toFixed(2)}</strong>
+              <strong>{formatCurrency(subtotal)}</strong>
             </div>
 
             <div className="mb-3 flex justify-between">
               <span>Discount ({discountPercent}%)</span>
-              <strong>- RM {discountAmount.toFixed(2)}</strong>
+              <strong>- {formatCurrency(discountAmount)}</strong>
             </div>
 
             <div className="mb-4 flex justify-between">
               <span>Tax ({taxRate}%)</span>
-              <strong>RM {tax.toFixed(2)}</strong>
+              <strong>{formatCurrency(tax)}</strong>
             </div>
 
             <div className="flex justify-between border-t pt-5">
               <span className="font-extrabold tracking-widest">GRAND TOTAL</span>
               <strong className="text-4xl font-extrabold text-[#071b52]">
-                RM {total.toFixed(2)}
+                {formatCurrency(total)}
               </strong>
             </div>
           </div>
@@ -1443,14 +1490,14 @@ export default function Staff() {
                 <div>
                   <strong>{item.product_name}</strong>
                   <p className="text-xs text-[#4e6077]">
-                    RM {Number(item.selling_price).toFixed(2)} / unit
+                    {formatCurrency(item.selling_price)} / unit
                   </p>
                 </div>
 
                 <span className="text-center font-bold">{item.quantity}</span>
 
                 <strong className="text-right">
-                  RM {(Number(item.selling_price) * item.quantity).toFixed(2)}
+                  {formatCurrency(Number(item.selling_price) * item.quantity)}
                 </strong>
               </div>
             ))}
@@ -1460,22 +1507,22 @@ export default function Staff() {
             <div className="space-y-3 text-sm">
               <div className="flex justify-between">
                 <span>Subtotal</span>
-                <strong>RM {completedSale.subtotal.toFixed(2)}</strong>
+                <strong>{formatCurrency(completedSale.subtotal)}</strong>
               </div>
 
               <div className="flex justify-between">
                 <span>Discount</span>
-                <strong>- RM {completedSale.discountAmount.toFixed(2)}</strong>
+                <strong>- {formatCurrency(completedSale.discountAmount)}</strong>
               </div>
 
               <div className="flex justify-between">
                 <span>Tax ({taxRate}%)</span>
-                <strong>RM {completedSale.tax.toFixed(2)}</strong>
+                <strong>{formatCurrency(completedSale.tax)}</strong>
               </div>
 
               <div className="flex justify-between rounded-md bg-[#071b52] px-5 py-4 text-xl font-extrabold text-white">
                 <span>Grand Total</span>
-                <strong>RM {completedSale.total.toFixed(2)}</strong>
+                <strong>{formatCurrency(completedSale.total)}</strong>
               </div>
             </div>
 

@@ -15,6 +15,9 @@ from routes.forecast_routes import forecast_bp
 from routes.purchase_routes import purchase_bp
 from routes.forgot_password_routes import forgot_password_bp
 from routes.dashboard_routes import dashboard_bp
+from routes.audit_routes import audit_bp
+from routes.ai_routes import ai_bp
+from routes.backup_routes import backup_bp
 
 def create_app():
     app = Flask(__name__)
@@ -41,6 +44,9 @@ def create_app():
     app.register_blueprint(purchase_bp)
     app.register_blueprint(forgot_password_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(audit_bp)
+    app.register_blueprint(ai_bp)
+    app.register_blueprint(backup_bp)
     
     return app
 

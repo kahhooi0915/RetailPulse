@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from audit import get_actor_user_id, log_audit
 
 purchase_bp = Blueprint("purchase_bp", __name__)
 
@@ -85,6 +86,7 @@ def get_suppliers():
 def create_supplier():
     try:
         data = request.get_json()
+        actor_user_id = get_actor_user_id(data)
 
         supplier_name = data.get("supplier_name")
         contact_person = data.get("contact_person")
@@ -121,6 +123,13 @@ def create_supplier():
 
         row = cur.fetchone()
         conn.commit()
+        log_audit(
+            actor_user_id,
+            "ADD_SUPPLIER",
+            "Supplier Management",
+            row[0],
+            f"Added supplier {supplier_name}."
+        )
 
         cur.close()
         conn.close()
@@ -140,6 +149,7 @@ def create_supplier():
 def update_supplier(supplier_id):
     try:
         data = request.get_json()
+        actor_user_id = get_actor_user_id(data)
 
         supplier_name = data.get("supplier_name")
         contact_person = data.get("contact_person")
@@ -177,6 +187,13 @@ def update_supplier(supplier_id):
             return jsonify({"message": "Supplier not found"}), 404
 
         conn.commit()
+        log_audit(
+            actor_user_id,
+            "UPDATE_SUPPLIER",
+            "Supplier Management",
+            supplier_id,
+            f"Updated supplier {supplier_name}."
+        )
         cur.close()
         conn.close()
 
@@ -190,8 +207,13 @@ def update_supplier(supplier_id):
 @purchase_bp.route("/admin/suppliers/<int:supplier_id>", methods=["DELETE"])
 def delete_supplier(supplier_id):
     try:
+        data = request.get_json(silent=True) or {}
+        actor_user_id = get_actor_user_id(data)
         conn = get_connection()
         cur = conn.cursor()
+
+        cur.execute("SELECT supplier_name FROM supplier WHERE supplier_id = %s", (supplier_id,))
+        supplier = cur.fetchone()
 
         cur.execute("""
             UPDATE supplier
@@ -206,6 +228,13 @@ def delete_supplier(supplier_id):
             return jsonify({"message": "Supplier not found"}), 404
 
         conn.commit()
+        log_audit(
+            actor_user_id,
+            "DELETE_SUPPLIER",
+            "Supplier Management",
+            supplier_id,
+            f"Deleted supplier {supplier[0] if supplier else supplier_id}."
+        )
         cur.close()
         conn.close()
 
@@ -421,78 +450,131 @@ def create_purchase():
     cur = None
 
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
 
         supplier_id = data.get("supplier_id")
-        product_id = data.get("product_id")
-        quantity = data.get("quantity")
+        receiving_branch_id = data.get("receiving_branch_id") or data.get("branch_id")
+        items = data.get("items")
         created_by = data.get("created_by")
 
         if supplier_id is None:
             return jsonify({"message": "Supplier is required"}), 400
 
-        if product_id is None:
-            return jsonify({"message": "Product is required"}), 400
-
-        if quantity is None or int(quantity) <= 0:
-            return jsonify({"message": "Quantity must be greater than 0"}), 400
+        # Backward compatibility for existing callers that send one product.
+        if items is None:
+            items = [{
+                "product_id": data.get("product_id"),
+                "quantity": data.get("quantity"),
+                "purchase_price": data.get("purchase_price")
+            }]
 
         if created_by is None:
             return jsonify({"message": "Created by user is required"}), 400
 
+        if not isinstance(items, list) or len(items) == 0:
+            return jsonify({"message": "At least one product item is required"}), 400
+
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
-            SELECT branch_id, branch_name
-            FROM branch
-            WHERE branch_type = 'WAREHOUSE'
-            ORDER BY branch_id
-            LIMIT 1
-        """)
+        if receiving_branch_id:
+            cur.execute("""
+                SELECT branch_id, branch_name, branch_type
+                FROM branch
+                WHERE branch_id = %s
+            """, (receiving_branch_id,))
+        else:
+            cur.execute("""
+                SELECT branch_id, branch_name, branch_type
+                FROM branch
+                WHERE branch_type = 'WAREHOUSE'
+                ORDER BY branch_id
+                LIMIT 1
+            """)
         warehouse = cur.fetchone()
 
         if not warehouse:
             return jsonify({"message": "Warehouse receiving location not found"}), 400
 
         warehouse_id = warehouse[0]
+        if warehouse[2] != "WAREHOUSE":
+            return jsonify({"message": "Supplier purchases can only be received into a warehouse"}), 400
 
         cur.execute("""
-            SELECT sp.purchase_price,
-                   sp.lead_time_days
-            FROM supplier_product sp
-            JOIN supplier s ON sp.supplier_id = s.supplier_id
-            JOIN product p ON sp.product_id = p.product_id
-            JOIN category c ON p.category_id = c.category_id
-            WHERE sp.supplier_id = %s
-              AND sp.product_id = %s
-              AND sp.status = 'ACTIVE'
-              AND s.status = 'ACTIVE'
-              AND p.status = 'ACTIVE'
-              AND c.status = 'ACTIVE'
-        """, (supplier_id, product_id))
-        supplier_product = cur.fetchone()
+            SELECT 1
+            FROM supplier
+            WHERE supplier_id = %s
+              AND status = 'ACTIVE'
+        """, (supplier_id,))
+        if not cur.fetchone():
+            return jsonify({"message": "Active supplier not found"}), 404
 
-        if not supplier_product:
-            return jsonify({"message": "Selected product is not active for this supplier"}), 400
+        product_ids = []
+        purchase_items = []
+        total_amount = 0
 
-        active_purchase = find_active_purchase_for_product_branch(
-            cur,
-            product_id,
-            warehouse_id
-        )
+        for item in items:
+            product_id = item.get("product_id")
+            quantity = item.get("quantity")
+            purchase_price = item.get("purchase_price")
 
-        if active_purchase:
-            return jsonify({
-                "message": "Purchase already pending for this product.",
-                "purchase_id": active_purchase[0],
-                "purchase_code": active_purchase[1],
-                "status": active_purchase[2]
-            }), 409
+            if product_id is None:
+                return jsonify({"message": "Product is required for every item"}), 400
 
-        unit_cost = float(supplier_product[0])
-        purchase_quantity = int(quantity)
-        subtotal = purchase_quantity * unit_cost
+            if product_id in product_ids:
+                return jsonify({"message": "Product cannot be duplicated in the same purchase order"}), 400
+
+            if quantity is None or int(quantity) <= 0:
+                return jsonify({"message": "Quantity must be greater than 0"}), 400
+
+            if purchase_price is not None and float(purchase_price) < 0:
+                return jsonify({"message": "Purchase price must be greater than or equal to 0"}), 400
+
+            cur.execute("""
+                SELECT sp.purchase_price,
+                       sp.lead_time_days
+                FROM supplier_product sp
+                JOIN supplier s ON sp.supplier_id = s.supplier_id
+                JOIN product p ON sp.product_id = p.product_id
+                JOIN category c ON p.category_id = c.category_id
+                WHERE sp.supplier_id = %s
+                  AND sp.product_id = %s
+                  AND sp.status = 'ACTIVE'
+                  AND s.status = 'ACTIVE'
+                  AND p.status = 'ACTIVE'
+                  AND c.status = 'ACTIVE'
+            """, (supplier_id, product_id))
+            supplier_product = cur.fetchone()
+
+            if not supplier_product:
+                return jsonify({"message": "Selected product is not active for this supplier"}), 400
+
+            active_purchase = find_active_purchase_for_product_branch(
+                cur,
+                product_id,
+                warehouse_id
+            )
+
+            if active_purchase:
+                return jsonify({
+                    "message": "Purchase already pending for this product.",
+                    "purchase_id": active_purchase[0],
+                    "purchase_code": active_purchase[1],
+                    "status": active_purchase[2]
+                }), 409
+
+            product_ids.append(product_id)
+            purchase_quantity = int(quantity)
+            unit_cost = float(purchase_price) if purchase_price is not None else float(supplier_product[0])
+            subtotal = purchase_quantity * unit_cost
+            total_amount += subtotal
+            purchase_items.append({
+                "product_id": product_id,
+                "quantity": purchase_quantity,
+                "unit_cost": unit_cost,
+                "lead_time_days": supplier_product[1],
+                "subtotal": subtotal
+            })
 
         cur.execute("""
             INSERT INTO purchase (
@@ -508,29 +590,37 @@ def create_purchase():
             supplier_id,
             warehouse_id,
             created_by,
-            subtotal
+            total_amount
         ))
 
         row = cur.fetchone()
 
-        cur.execute("""
-            INSERT INTO purchase_detail (
-                purchase_id,
-                product_id,
-                quantity,
-                unit_cost,
-                subtotal
-            )
-            VALUES (%s, %s, %s, %s, %s)
-        """, (
-            row[0],
-            product_id,
-            purchase_quantity,
-            unit_cost,
-            subtotal
-        ))
+        for item in purchase_items:
+            cur.execute("""
+                INSERT INTO purchase_detail (
+                    purchase_id,
+                    product_id,
+                    quantity,
+                    unit_cost,
+                    subtotal
+                )
+                VALUES (%s, %s, %s, %s, %s)
+            """, (
+                row[0],
+                item["product_id"],
+                item["quantity"],
+                item["unit_cost"],
+                item["subtotal"]
+            ))
 
         conn.commit()
+        log_audit(
+            created_by,
+            "CREATE_PURCHASE",
+            "Purchase Management",
+            row[0],
+            f"Created Purchase Order {row[1]}."
+        )
 
         return jsonify({
             "message": "Purchase created successfully",
@@ -538,10 +628,8 @@ def create_purchase():
             "purchase_code": row[1],
             "branch_id": warehouse_id,
             "branch_name": warehouse[1],
-            "product_id": product_id,
-            "quantity": purchase_quantity,
-            "unit_cost": unit_cost,
-            "total_amount": subtotal
+            "items": purchase_items,
+            "total_amount": total_amount
         }), 201
 
     except Exception as e:
@@ -564,16 +652,23 @@ def get_purchase_details(purchase_id):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT purchase_id,
-                   purchase_code,
-                   supplier_id,
-                   branch_id,
-                   created_by,
-                   purchase_date,
-                   status,
-                   total_amount
-            FROM purchase
-            WHERE purchase_id = %s
+            SELECT p.purchase_id,
+                   p.purchase_code,
+                   p.supplier_id,
+                   p.branch_id,
+                   p.created_by,
+                   p.purchase_date,
+                   p.status,
+                   p.total_amount,
+                   s.supplier_name,
+                   s.contact_person,
+                   s.phone,
+                   s.email,
+                   b.branch_name
+            FROM purchase p
+            JOIN supplier s ON p.supplier_id = s.supplier_id
+            JOIN branch b ON p.branch_id = b.branch_id
+            WHERE p.purchase_id = %s
         """, (purchase_id,))
 
         row = cur.fetchone()
@@ -591,7 +686,12 @@ def get_purchase_details(purchase_id):
             "created_by": row[4],
             "purchase_date": row[5].isoformat() if row[5] else None,
             "status": row[6],
-            "total_amount": float(row[7])
+            "total_amount": float(row[7]),
+            "supplier_name": row[8],
+            "supplier_contact_person": row[9],
+            "supplier_phone": row[10],
+            "supplier_email": row[11],
+            "branch_name": row[12]
         }
 
         cur.execute("""
@@ -600,12 +700,16 @@ def get_purchase_details(purchase_id):
                    p.product_name,
                    pd.quantity,
                    pd.unit_cost,
-                   pd.subtotal
+                   pd.subtotal,
+                   sp.lead_time_days
             FROM purchase_detail pd
             JOIN product p ON pd.product_id = p.product_id
+            LEFT JOIN supplier_product sp
+              ON sp.product_id = pd.product_id
+             AND sp.supplier_id = %s
             WHERE pd.purchase_id = %s
             ORDER BY pd.purchase_detail_id
-        """, (purchase_id,))
+        """, (purchase["supplier_id"], purchase_id))
 
         detail_rows = cur.fetchall()
         details = []
@@ -617,7 +721,8 @@ def get_purchase_details(purchase_id):
                 "product_name": d[2],
                 "quantity": d[3],
                 "unit_cost": float(d[4]),
-                "subtotal": float(d[5])
+                "subtotal": float(d[5]),
+                "lead_time_days": d[6]
             })
 
         purchase["details"] = details
@@ -649,7 +754,7 @@ def add_purchase_detail(purchase_id):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT branch_id
+            SELECT supplier_id, branch_id, status
             FROM purchase
             WHERE purchase_id = %s
         """, (purchase_id,))
@@ -660,13 +765,62 @@ def add_purchase_detail(purchase_id):
             conn.close()
             return jsonify({"message": "Purchase not found"}), 404
 
+        if purchase_row[2] != "PENDING":
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Purchase items can only be added while purchase is PENDING"}), 400
+
+        if product_id is None:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Product is required"}), 400
+
+        if quantity is None or int(quantity) <= 0:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Quantity must be greater than 0"}), 400
+
+        if unit_cost is None or float(unit_cost) < 0:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Unit cost cannot be negative"}), 400
+
+        cur.execute("""
+            SELECT 1
+            FROM purchase_detail
+            WHERE purchase_id = %s
+              AND product_id = %s
+        """, (purchase_id, product_id))
+        if cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Product cannot be duplicated in the same purchase order"}), 400
+
+        cur.execute("""
+            SELECT 1
+            FROM supplier_product sp
+            JOIN supplier s ON sp.supplier_id = s.supplier_id
+            JOIN product p ON sp.product_id = p.product_id
+            JOIN category c ON p.category_id = c.category_id
+            WHERE sp.supplier_id = %s
+              AND sp.product_id = %s
+              AND sp.status = 'ACTIVE'
+              AND s.status = 'ACTIVE'
+              AND p.status = 'ACTIVE'
+              AND c.status = 'ACTIVE'
+        """, (purchase_row[0], product_id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Selected product is not active for this supplier"}), 400
+
         active_purchase = find_active_purchase_for_product_branch(
             cur,
             product_id,
-            purchase_row[0]
+            purchase_row[1]
         )
 
-        if active_purchase:
+        if active_purchase and active_purchase[0] != purchase_id:
             cur.close()
             conn.close()
             return jsonify({
@@ -691,10 +845,21 @@ def add_purchase_detail(purchase_id):
             product_id,
             quantity,
             unit_cost,
-            quantity * unit_cost
+            int(quantity) * float(unit_cost)
         ))
 
         row = cur.fetchone()
+
+        cur.execute("""
+            UPDATE purchase
+            SET total_amount = (
+                    SELECT COALESCE(SUM(subtotal), 0)
+                    FROM purchase_detail
+                    WHERE purchase_id = %s
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE purchase_id = %s
+        """, (purchase_id, purchase_id))
         conn.commit()
 
         cur.close()
@@ -717,14 +882,32 @@ def delete_purchase_detail(purchase_detail_id):
         cur = conn.cursor()
 
         cur.execute("""
+            SELECT purchase_id
+            FROM purchase_detail
+            WHERE purchase_detail_id = %s
+        """, (purchase_detail_id,))
+        detail = cur.fetchone()
+
+        if not detail:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Purchase detail not found"}), 404
+
+        cur.execute("""
             DELETE FROM purchase_detail
             WHERE purchase_detail_id = %s
         """, (purchase_detail_id,))
 
-        if cur.rowcount == 0:
-            cur.close()
-            conn.close()
-            return jsonify({"message": "Purchase detail not found"}), 404
+        cur.execute("""
+            UPDATE purchase
+            SET total_amount = (
+                    SELECT COALESCE(SUM(subtotal), 0)
+                    FROM purchase_detail
+                    WHERE purchase_id = %s
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE purchase_id = %s
+        """, (detail[0], detail[0]))
 
         conn.commit()
         cur.close()
@@ -744,8 +927,13 @@ def delete_purchase_detail(purchase_detail_id):
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/ordered", methods=["PUT"])
 def mark_purchase_ordered(purchase_id):
     try:
+        data = request.get_json(silent=True) or {}
+        actor_user_id = get_actor_user_id(data)
         conn = get_connection()
         cur = conn.cursor()
+
+        cur.execute("SELECT purchase_code, created_by FROM purchase WHERE purchase_id = %s", (purchase_id,))
+        purchase = cur.fetchone()
 
         cur.execute("""
             UPDATE purchase
@@ -763,6 +951,13 @@ def mark_purchase_ordered(purchase_id):
             }), 400
 
         conn.commit()
+        log_audit(
+            actor_user_id or (purchase[1] if purchase else None),
+            "MARK_PURCHASE_ORDERED",
+            "Purchase Management",
+            purchase_id,
+            f"Purchase Order {purchase[0] if purchase else purchase_id} marked as ordered."
+        )
         cur.close()
         conn.close()
 
@@ -776,8 +971,13 @@ def mark_purchase_ordered(purchase_id):
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/cancel", methods=["PUT"])
 def cancel_purchase_order(purchase_id):
     try:
+        data = request.get_json(silent=True) or {}
+        actor_user_id = get_actor_user_id(data)
         conn = get_connection()
         cur = conn.cursor()
+
+        cur.execute("SELECT purchase_code, created_by FROM purchase WHERE purchase_id = %s", (purchase_id,))
+        purchase = cur.fetchone()
 
         cur.execute("""
             UPDATE purchase
@@ -795,6 +995,13 @@ def cancel_purchase_order(purchase_id):
             }), 400
 
         conn.commit()
+        log_audit(
+            actor_user_id or (purchase[1] if purchase else None),
+            "CANCEL_PURCHASE",
+            "Purchase Management",
+            purchase_id,
+            f"Cancelled Purchase Order {purchase[0] if purchase else purchase_id}."
+        )
         cur.close()
         conn.close()
 
@@ -807,22 +1014,107 @@ def cancel_purchase_order(purchase_id):
 
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/receive", methods=["PUT"])
 def mark_purchase_received(purchase_id):
+    conn = None
+    cur = None
+
     try:
+        data = request.get_json(silent=True) or {}
+        actor_user_id = get_actor_user_id(data)
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("SELECT receive_purchase(%s)", (purchase_id,))
-        result = cur.fetchone()[0]
+        cur.execute("""
+            SELECT purchase_id, branch_id, status, purchase_code, created_by
+            FROM purchase
+            WHERE purchase_id = %s
+            FOR UPDATE
+        """, (purchase_id,))
+        purchase = cur.fetchone()
+
+        if not purchase:
+            conn.rollback()
+            return jsonify({"message": "Purchase not found"}), 404
+
+        if purchase[2] == "RECEIVED":
+            conn.rollback()
+            return jsonify({"message": "Purchase has already been received"}), 400
+
+        if purchase[2] != "ORDERED":
+            conn.rollback()
+            return jsonify({"message": "Only ORDERED purchases can be received"}), 400
+
+        branch_id = purchase[1]
+
+        cur.execute("""
+            SELECT purchase_detail_id, product_id, quantity
+            FROM purchase_detail
+            WHERE purchase_id = %s
+            ORDER BY purchase_detail_id
+        """, (purchase_id,))
+        items = cur.fetchall()
+
+        if not items:
+            conn.rollback()
+            return jsonify({"message": "Purchase has no items to receive"}), 400
+
+        for _, product_id, quantity in items:
+            cur.execute("""
+                SELECT quantity_in_stock
+                FROM inventory
+                WHERE product_id = %s
+                  AND branch_id = %s
+                FOR UPDATE
+            """, (product_id, branch_id))
+            inventory_row = cur.fetchone()
+
+            if inventory_row:
+                cur.execute("""
+                    UPDATE inventory
+                    SET quantity_in_stock = quantity_in_stock + %s,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE product_id = %s
+                      AND branch_id = %s
+                """, (quantity, product_id, branch_id))
+            else:
+                cur.execute("""
+                    INSERT INTO inventory (
+                        product_id,
+                        branch_id,
+                        quantity_in_stock,
+                        last_updated
+                    )
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                """, (product_id, branch_id, quantity))
+
+        cur.execute("""
+            UPDATE purchase
+            SET status = 'RECEIVED',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE purchase_id = %s
+              AND status = 'ORDERED'
+        """, (purchase_id,))
 
         conn.commit()
-        cur.close()
-        conn.close()
+        log_audit(
+            actor_user_id or purchase[4],
+            "MARK_PURCHASE_DELIVERED",
+            "Purchase Management",
+            purchase_id,
+            f"Purchase Order {purchase[3]} marked as delivered and warehouse inventory updated."
+        )
 
-        return jsonify({"message": result}), 200
+        return jsonify({"message": "Purchase received successfully"}), 200
 
     except Exception as e:
+        if conn:
+            conn.rollback()
         print("ERROR mark_purchase_received:", e)
         return jsonify({"message": str(e)}), 500
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 # =========================================================
 # INVENTORY OVERVIEW - CREATE PURCHASE RECOMMENDATION
@@ -938,6 +1230,13 @@ def create_purchase_recommendation():
         ))
 
         conn.commit()
+        log_audit(
+            created_by,
+            "CREATE_PURCHASE",
+            "Purchase Management",
+            purchase_id,
+            f"Created Purchase Order {purchase_code}."
+        )
         cur.close()
         conn.close()
 

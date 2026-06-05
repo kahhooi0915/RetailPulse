@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import setFavicon from "./utils/setFavicon";
 import Login from "./pages/Login";
@@ -21,16 +21,20 @@ import AdminInventoryOverview from "./pages/AdminInventoryOverview";
 import AdminSupplierManagement from "./pages/AdminSupplierManagement";
 import AdminPurchaseManagement from "./pages/AdminPurchaseManagement";
 import AdminWarehouseManagement from "./pages/AdminWarehouseManagement";
+import AdminActivityLog from "./pages/AdminActivityLog";
+import DatabaseBackup from "./pages/DatabaseBackup";
+import FloatingAIAssistant from "./components/FloatingAIAssistant";
 
-function App() {
+function AppContent() {
+  const location = useLocation();
 
   useEffect(() => {
     const user = JSON.parse(sessionStorage.getItem("user"));
     setFavicon(user?.role);
-  }, []);
+  }, [location.pathname]);
 
   return (
-    <BrowserRouter>
+    <>
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -52,7 +56,18 @@ function App() {
         <Route path="/admin/warehouse" element={<AdminWarehouseManagement />} />
         <Route path="/admin/suppliers" element={<AdminSupplierManagement />} />
         <Route path="/admin/purchases" element={<AdminPurchaseManagement />} />
+        <Route path="/admin/activity-log" element={<AdminActivityLog />} />
+        <Route path="/admin/database-backup" element={<DatabaseBackup />} />
       </Routes>
+      <FloatingAIAssistant />
+    </>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
     </BrowserRouter>
   );
 

@@ -15,6 +15,7 @@ import {
     Link2,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
@@ -248,6 +249,7 @@ export default function AdminSupplierManagement() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     ...supplierForm,
+                    actor_user_id: user.user_id,
                     supplier_name: supplierForm.supplier_name.trim(),
                     contact_person: supplierForm.contact_person.trim(),
                     phone: supplierForm.phone.trim(),
@@ -352,6 +354,8 @@ export default function AdminSupplierManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/suppliers/${supplier.supplier_id}`, {
                 method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ actor_user_id: user.user_id }),
             });
 
             const data = await res.json();
@@ -1019,7 +1023,7 @@ function SupplierProductTable({ supplierProducts, onEdit, onDelete }) {
                                 <p className="font-extrabold text-[#17325c]">{item.supplier_name}</p>
                             </td>
                             <td className="px-4 py-4 font-semibold text-[#17325c]">{item.product_name}</td>
-                            <td className="px-4 py-4 font-extrabold text-[#0c2f73]">RM {Number(item.purchase_price || 0).toFixed(2)}</td>
+                            <td className="px-4 py-4 font-extrabold text-[#0c2f73]">{formatCurrency(item.purchase_price)}</td>
                             <td className="px-4 py-4 font-semibold text-[#17325c]">{item.lead_time_days ?? "-"} day(s)</td>
                             <td className="px-4 py-4">
                                 {item.is_preferred ? (

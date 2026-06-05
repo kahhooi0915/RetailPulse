@@ -63,7 +63,7 @@ export default function Sidebar({ user, onOpenChat }) {
                 {/* Main Menu Items */}
                 <div className="flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
                     {items
-                        .filter((item) => item.action !== "chat")
+                        .filter((item) => item.placement !== "bottom")
                         .map((item) => {
                             const hasChildren = Array.isArray(item.children);
                             const groupOpen = openGroups[item.label];
@@ -141,18 +141,24 @@ export default function Sidebar({ user, onOpenChat }) {
                         })}
                 </div>
 
-                {/* Help Support at Bottom */}
+                {/* Bottom Menu Items */}
                 <div className="pt-4 border-t border-blue-100">
                     {items
-                        .filter((item) => item.action === "chat")
+                        .filter((item) => item.placement === "bottom")
                         .map((item) => (
                             <SidebarButton
                                 key={item.label}
                                 sidebarOpen={sidebarOpen}
                                 icon={item.icon}
                                 label={item.label}
-                                active={false}
-                                onClick={() => onOpenChat?.()}
+                                active={item.path === location.pathname}
+                                onClick={() => {
+                                    if (item.action === "chat") {
+                                        onOpenChat?.();
+                                    } else if (item.path) {
+                                        navigate(item.path);
+                                    }
+                                }}
                             />
                         ))}
                 </div>

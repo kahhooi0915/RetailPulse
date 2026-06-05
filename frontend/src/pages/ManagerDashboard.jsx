@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ManagerSidebar from "../components/ManagerSidebar";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
@@ -153,8 +154,6 @@ export default function ManagerDashboard() {
             };
         });
     }, [branches, sales, inventory]);
-
-    const formatCurrency = (amount) => `RM ${Number(amount || 0).toFixed(2)}`;
 
     if (loading) {
         return (

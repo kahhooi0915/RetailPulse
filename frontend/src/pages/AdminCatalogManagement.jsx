@@ -14,6 +14,7 @@ import {
     ImagePlus,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
@@ -30,6 +31,7 @@ const emptyProduct = {
     status: "ACTIVE",
     description: "",
     product_image: null,
+    suppliers: [],
 };
 
 const getProductImageUrl = (productId) => {
@@ -42,6 +44,7 @@ export default function AdminCatalogManagement() {
     const [user, setUser] = useState(null);
     const [categories, setCategories] = useState([]);
     const [products, setProducts] = useState([]);
+    const [suppliers, setSuppliers] = useState([]);
 
     const [activeTab, setActiveTab] = useState("products");
     const [searchTerm, setSearchTerm] = useState("");
@@ -104,16 +107,19 @@ export default function AdminCatalogManagement() {
         try {
             setLoading(true);
 
-            const [categoryRes, productRes] = await Promise.all([
+            const [categoryRes, productRes, supplierRes] = await Promise.all([
                 fetch(`${API_BASE}/admin/categories`),
                 fetch(`${API_BASE}/admin/products`),
+                fetch(`${API_BASE}/admin/suppliers`),
             ]);
 
             const categoryData = await categoryRes.json();
             const productData = await productRes.json();
+            const supplierData = await supplierRes.json();
 
             setCategories(Array.isArray(categoryData) ? categoryData : []);
             setProducts(Array.isArray(productData) ? productData : []);
+            setSuppliers(Array.isArray(supplierData) ? supplierData : []);
         } catch (error) {
             console.error(error);
             showToast("Failed to load catalog data.", "error");
@@ -163,7 +169,7 @@ export default function AdminCatalogManagement() {
 
     const openAddProduct = () => {
         setEditProduct(null);
-        setProductForm(emptyProduct);
+        setProductForm({ ...emptyProduct, suppliers: [] });
         setSelectedImageName("");
         setShowProductForm(true);
     };
@@ -178,9 +184,51 @@ export default function AdminCatalogManagement() {
             status: product.status || "ACTIVE",
             description: product.description || "",
             product_image: null,
+            suppliers: (product.suppliers || []).map((supplier) => ({
+                supplier_id: String(supplier.supplier_id),
+                purchase_price: supplier.purchase_price ?? "",
+                lead_time_days: supplier.lead_time_days ?? "",
+            })),
         });
         setSelectedImageName("");
         setShowProductForm(true);
+    };
+
+    const updateProductSupplier = (supplierId, field, value) => {
+        setProductForm((current) => {
+            const exists = current.suppliers.some(
+                (item) => Number(item.supplier_id) === Number(supplierId)
+            );
+
+            if (field === "selected") {
+                return {
+                    ...current,
+                    suppliers: value
+                        ? [
+                            ...current.suppliers,
+                            {
+                                supplier_id: String(supplierId),
+                                purchase_price: "",
+                                lead_time_days: "",
+                            },
+                        ]
+                        : current.suppliers.filter(
+                            (item) => Number(item.supplier_id) !== Number(supplierId)
+                        ),
+                };
+            }
+
+            if (!exists) return current;
+
+            return {
+                ...current,
+                suppliers: current.suppliers.map((item) =>
+                    Number(item.supplier_id) === Number(supplierId)
+                        ? { ...item, [field]: value }
+                        : item
+                ),
+            };
+        });
     };
 
     const saveCategory = async (e) => {
@@ -233,6 +281,17 @@ export default function AdminCatalogManagement() {
         if (productForm.reorder_level === "") return showToast("Reorder level is required.", "error");
         if (Number(productForm.selling_price) < 0) return showToast("Selling price cannot be negative.", "error");
         if (Number(productForm.reorder_level) < 0) return showToast("Reorder level cannot be negative.", "error");
+        if (productForm.suppliers.length === 0) return showToast("At least one supplier assignment is required.", "error");
+
+        for (const supplier of productForm.suppliers) {
+            if (supplier.purchase_price === "" || Number(supplier.purchase_price) < 0) {
+                return showToast("Supplier purchase price must be greater than or equal to 0.", "error");
+            }
+
+            if (supplier.lead_time_days === "" || Number(supplier.lead_time_days) < 0) {
+                return showToast("Supplier lead time days must be greater than or equal to 0.", "error");
+            }
+        }
 
         try {
             setSaving(true);
@@ -244,6 +303,14 @@ export default function AdminCatalogManagement() {
             formData.append("reorder_level", productForm.reorder_level);
             formData.append("status", productForm.status);
             formData.append("description", productForm.description || "");
+            formData.append("actor_user_id", user.user_id);
+            formData.append("suppliers", JSON.stringify(
+                productForm.suppliers.map((supplier) => ({
+                    supplier_id: Number(supplier.supplier_id),
+                    purchase_price: Number(supplier.purchase_price),
+                    lead_time_days: Number(supplier.lead_time_days),
+                }))
+            ));
 
             if (productForm.product_image instanceof File) {
                 formData.append("product_image", productForm.product_image);
@@ -308,6 +375,8 @@ export default function AdminCatalogManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/products/${product.product_id}`, {
                 method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ actor_user_id: user.user_id }),
             });
 
             const data = await res.json();
@@ -482,6 +551,7 @@ export default function AdminCatalogManagement() {
                     title={editProduct ? "Update Product" : "Add Product"}
                     subtitle="Product data will be used by POS, inventory, and analytics."
                     onClose={() => setShowProductForm(false)}
+                    wide
                 >
                     <form onSubmit={saveProduct} className="space-y-5">
                         <FormInput
@@ -540,6 +610,12 @@ export default function AdminCatalogManagement() {
                                 { value: "ACTIVE", label: "Active" },
                                 { value: "INACTIVE", label: "Inactive" },
                             ]}
+                        />
+
+                        <SupplierAssignmentSection
+                            suppliers={suppliers.filter((supplier) => supplier.status === "ACTIVE")}
+                            assignments={productForm.suppliers}
+                            onChange={updateProductSupplier}
                         />
 
                         <FileInput
@@ -621,7 +697,7 @@ export default function AdminCatalogManagement() {
 
                                     <div className="mt-3 flex items-center justify-between">
                                         <span className="text-lg font-extrabold text-[#0c2f73]">
-                                            RM {Number(item.selling_price).toFixed(2)}
+                                            {formatCurrency(item.selling_price)}
                                         </span>
 
                                         <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-extrabold text-green-600">
@@ -780,7 +856,7 @@ function ProductTable({ products, onEdit, onDelete }) {
                             </td>
 
                             <td className="px-4 py-4 font-extrabold text-[#0c2f73]">
-                                RM {Number(item.selling_price).toFixed(2)}
+                                {formatCurrency(item.selling_price)}
                             </td>
 
                             <td className="px-4 py-4 font-semibold text-[#17325c]">
@@ -881,6 +957,107 @@ function ProductImage({ productId, productName, className }) {
             className={className}
             onError={() => setHasError(true)}
         />
+    );
+}
+
+function SupplierAssignmentSection({ suppliers, assignments, onChange }) {
+    const getAssignment = (supplierId) => assignments.find(
+        (item) => Number(item.supplier_id) === Number(supplierId)
+    );
+
+    return (
+        <div className="rounded-2xl border border-blue-50 bg-white p-4">
+            <div className="mb-4 flex flex-col gap-1">
+                <h3 className="text-base font-extrabold text-[#07102f]">
+                    Supplier Assignment
+                </h3>
+                <p className="text-sm font-semibold text-[#6f85a3]">
+                    Select supplier(s) for this product and set purchase details.
+                </p>
+            </div>
+
+            <div className="space-y-3">
+                {suppliers.map((supplier) => {
+                    const assignment = getAssignment(supplier.supplier_id);
+                    const selected = Boolean(assignment);
+
+                    return (
+                        <div
+                            key={supplier.supplier_id}
+                            className={`rounded-2xl border p-4 transition ${
+                                selected
+                                    ? "border-[#1e4db7] bg-[#f8fcff]"
+                                    : "border-blue-50 bg-white"
+                            }`}
+                        >
+                            <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr_0.8fr] lg:items-center">
+                                <label className="flex min-w-0 cursor-pointer items-start gap-3">
+                                    <input
+                                        type="checkbox"
+                                        checked={selected}
+                                        onChange={(event) =>
+                                            onChange(supplier.supplier_id, "selected", event.target.checked)
+                                        }
+                                        className="mt-1 h-4 w-4 accent-[#0c2f73]"
+                                    />
+                                    <span className="min-w-0">
+                                        <span className="block font-extrabold text-[#07102f]">
+                                            {supplier.supplier_name}
+                                        </span>
+                                        <span className="mt-1 block text-xs font-semibold text-[#6f85a3]">
+                                            {supplier.supplier_code || `SID-${supplier.supplier_id}`}
+                                            {supplier.contact_person ? ` | ${supplier.contact_person}` : ""}
+                                        </span>
+                                    </span>
+                                </label>
+
+                                <label className="block">
+                                    <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                                        Purchase Price
+                                    </span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={assignment?.purchase_price ?? ""}
+                                        disabled={!selected}
+                                        onChange={(event) =>
+                                            onChange(supplier.supplier_id, "purchase_price", event.target.value)
+                                        }
+                                        placeholder="0.00"
+                                        className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb] disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                </label>
+
+                                <label className="block">
+                                    <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                                        Lead Time Days
+                                    </span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={assignment?.lead_time_days ?? ""}
+                                        disabled={!selected}
+                                        onChange={(event) =>
+                                            onChange(supplier.supplier_id, "lead_time_days", event.target.value)
+                                        }
+                                        placeholder="0"
+                                        className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb] disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {suppliers.length === 0 && (
+                    <div className="rounded-2xl bg-[#f8fcff] p-4 text-center text-sm font-semibold text-[#6f85a3]">
+                        No active suppliers available.
+                    </div>
+                )}
+            </div>
+        </div>
     );
 }
 

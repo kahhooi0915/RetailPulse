@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API = "http://localhost:5000";
 
@@ -151,10 +152,10 @@ export default function SalesMonitoring() {
         >
             <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-4">
-                    <SummaryCard title="Total Revenue" value={`RM ${totalRevenue.toFixed(2)}`} />
+                    <SummaryCard title="Total Revenue" value={formatCurrency(totalRevenue)} />
                     <SummaryCard title="Transactions" value={totalTransactions} />
-                    <SummaryCard title="Average Sale" value={`RM ${avgTransaction.toFixed(2)}`} />
-                    <SummaryCard title="Today Revenue" value={`RM ${todayRevenue.toFixed(2)}`} />
+                    <SummaryCard title="Average Sale" value={formatCurrency(avgTransaction)} />
+                    <SummaryCard title="Today Revenue" value={formatCurrency(todayRevenue)} />
                 </div>
 
                 <div className="rounded-3xl bg-white p-5 shadow">
@@ -235,7 +236,7 @@ export default function SalesMonitoring() {
                                                 </span>
                                             </td>
                                             <td className="text-right font-extrabold">
-                                                RM {Number(sale.total_amount || 0).toFixed(2)}
+                                                {formatCurrency(sale.total_amount)}
                                             </td>
                                         </tr>
                                     ))
@@ -254,7 +255,7 @@ export default function SalesMonitoring() {
                                 <ProgressRow
                                     key={branch.branch}
                                     label={branch.branch}
-                                    value={`RM ${branch.revenue.toFixed(2)}`}
+                                    value={formatCurrency(branch.revenue)}
                                     percent={
                                         totalRevenue > 0
                                             ? (branch.revenue / totalRevenue) * 100
@@ -273,7 +274,7 @@ export default function SalesMonitoring() {
                                 <ProgressRow
                                     key={item.method}
                                     label={item.method}
-                                    value={`RM ${item.revenue.toFixed(2)}`}
+                                    value={formatCurrency(item.revenue)}
                                     percent={
                                         totalRevenue > 0
                                             ? (item.revenue / totalRevenue) * 100
@@ -304,7 +305,7 @@ export default function SalesMonitoring() {
                                         </div>
 
                                         <p className="font-extrabold text-[#1e4db7]">
-                                            RM {product.revenue.toFixed(2)}
+                                            {formatCurrency(product.revenue)}
                                         </p>
                                     </div>
                                 </div>

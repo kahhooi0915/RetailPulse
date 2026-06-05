@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from audit import log_audit
 
 stock_transfer_bp = Blueprint("stock_transfer_bp", __name__)
 
@@ -169,6 +170,13 @@ def create_transfer_request():
 
         new_transfer = cur.fetchone()
         conn.commit()
+        log_audit(
+            requested_by,
+            "CREATE_TRANSFER",
+            "Stock Transfer",
+            new_transfer[0],
+            f"Created Stock Transfer {new_transfer[1]}."
+        )
 
         return jsonify({
             "message": "Transfer request created",
@@ -213,7 +221,7 @@ def process_transfer_approval(transfer_id, approval_scope=None):
 
         # Get transfer info
         cur.execute("""
-            SELECT st.from_branch_id, st.to_branch_id, fb.branch_type, tb.branch_type
+            SELECT st.from_branch_id, st.to_branch_id, fb.branch_type, tb.branch_type, st.transfer_code
             FROM stock_transfer st
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
@@ -225,7 +233,7 @@ def process_transfer_approval(transfer_id, approval_scope=None):
         if not transfer:
             return jsonify({"message": "Transfer not found or already processed"}), 404
 
-        from_branch_id, to_branch_id, from_branch_type, to_branch_type = transfer
+        from_branch_id, to_branch_id, from_branch_type, to_branch_type, transfer_code = transfer
         approver = _get_user(cur, approved_by)
 
         if approval_scope == "MANAGER":
@@ -318,6 +326,13 @@ def process_transfer_approval(transfer_id, approval_scope=None):
         """, (approved_by, transfer_id))
 
         conn.commit()
+        log_audit(
+            approved_by,
+            "APPROVE_TRANSFER",
+            "Stock Transfer",
+            transfer_id,
+            f"Approved Stock Transfer {transfer_code}."
+        )
 
         return jsonify({"message": "Transfer approved (now in transit)"}), 200
 
@@ -363,7 +378,7 @@ def process_transfer_rejection(transfer_id):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT st.from_branch_id, fb.branch_type, tb.branch_type
+            SELECT st.from_branch_id, fb.branch_type, tb.branch_type, st.transfer_code
             FROM stock_transfer st
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
@@ -376,7 +391,7 @@ def process_transfer_rejection(transfer_id):
         if not transfer:
             return jsonify({"message": "Transfer not found or already processed"}), 404
 
-        from_branch_id, from_branch_type, to_branch_type = transfer
+        from_branch_id, from_branch_type, to_branch_type, transfer_code = transfer
         approver = _get_user(cur, approved_by)
 
         if request.path.startswith("/manager/"):
@@ -414,6 +429,13 @@ def process_transfer_rejection(transfer_id):
         """, (approved_by, reject_reason, transfer_id))
 
         conn.commit()
+        log_audit(
+            approved_by,
+            "REJECT_TRANSFER",
+            "Stock Transfer",
+            transfer_id,
+            f"Rejected Stock Transfer {transfer_code}."
+        )
 
         return jsonify({"message": "Transfer rejected"}), 200
 
@@ -447,7 +469,7 @@ def receive_transfer(transfer_id):
 
         # Get transfer info
         cur.execute("""
-            SELECT from_branch_id, to_branch_id
+            SELECT from_branch_id, to_branch_id, transfer_code
             FROM stock_transfer
             WHERE transfer_id = %s AND status = 'APPROVED'
         """, (transfer_id,))
@@ -456,7 +478,7 @@ def receive_transfer(transfer_id):
         if not transfer:
             return jsonify({"message": "Transfer not ready for receiving"}), 400
 
-        from_branch_id, to_branch_id = transfer
+        from_branch_id, to_branch_id, transfer_code = transfer
         receiver = _get_user(cur, received_by)
         allowed, message = _can_receive_transfer(receiver, to_branch_id)
 
@@ -513,6 +535,13 @@ def receive_transfer(transfer_id):
         """, (received_by, transfer_id))
 
         conn.commit()
+        log_audit(
+            received_by,
+            "COMPLETE_TRANSFER",
+            "Stock Transfer",
+            transfer_id,
+            f"Completed Stock Transfer {transfer_code}."
+        )
 
         return jsonify({"message": "Stock received successfully"}), 200
 
@@ -1236,6 +1265,13 @@ def auto_suggest_transfer():
         """, (transfer_id, product_id, request_qty))
 
         conn.commit()
+        log_audit(
+            requested_by,
+            "CREATE_TRANSFER",
+            "Stock Transfer",
+            transfer_id,
+            f"Created Stock Transfer {transfer_code}."
+        )
         return jsonify({
             "message": "Stock transfer request created successfully",
             "transfer_id": transfer_id,

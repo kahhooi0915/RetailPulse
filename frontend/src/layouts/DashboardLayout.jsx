@@ -20,6 +20,7 @@ export default function DashboardLayout({
     onOpenNotifications,
     notificationCount = 0,
     compactMode = false,
+    headerActions,
 }) {
     const navigate = useNavigate();
     const [showUserMenu, setShowUserMenu] = useState(false);
@@ -59,6 +60,8 @@ export default function DashboardLayout({
                         </div>
 
                         <div className="relative ml-auto flex items-center gap-3">
+                            {headerActions}
+
                             {onRefresh && (
                                 <button
                                     onClick={onRefresh}

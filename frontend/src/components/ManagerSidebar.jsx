@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { BarChart3, Boxes, ChevronRight, HelpCircle, Truck } from "lucide-react";
+import { BarChart3, Boxes, ChevronRight, Truck } from "lucide-react";
 
 const managerMenuItems = [
     {
@@ -20,7 +20,7 @@ const managerMenuItems = [
     },
 ];
 
-export default function ManagerSidebar({ user, onOpenHelp }) {
+export default function ManagerSidebar({ user }) {
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -79,16 +79,6 @@ export default function ManagerSidebar({ user, onOpenHelp }) {
                             onClick={() => navigate(item.path)}
                         />
                     ))}
-                </div>
-
-                <div className="pt-4 border-t border-blue-100">
-                    <ManagerSidebarButton
-                        sidebarOpen={sidebarOpen}
-                        icon={HelpCircle}
-                        label="Help Support"
-                        active={false}
-                        onClick={onOpenHelp}
-                    />
                 </div>
             </nav>
         </aside>

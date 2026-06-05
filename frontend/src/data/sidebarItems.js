@@ -3,12 +3,13 @@ import {
     Boxes,
     Building2,
     FolderKanban,
-    HelpCircle,
+    DatabaseBackup,
     Package,
     ShoppingCart,
     TrendingUp,
     Users,
     Warehouse,
+    ClipboardList,
 } from "lucide-react";
 
 export const sidebarItems = {
@@ -94,15 +95,20 @@ export const sidebarItems = {
                     icon: TrendingUp,
                     path: "/admin/reports",
                 },
+                {
+                    label: "Activity Log",
+                    icon: ClipboardList,
+                    path: "/admin/activity-log",
+                },
             ],
         },
 
         // Standalone item
         {
-            label: "Help Support",
-            icon: HelpCircle,
-            path: null,
-            action: "chat",
+            label: "Database Backup",
+            icon: DatabaseBackup,
+            path: "/admin/database-backup",
+            placement: "bottom",
         },
     ],
 
@@ -133,12 +139,6 @@ export const sidebarItems = {
             icon: TrendingUp,
             path: "/manager/reports",
         },
-        {
-            label: "Help Support",
-            icon: HelpCircle,
-            path: null,
-            action: "chat",
-        },
     ],
 
     BRANCH_STAFF: [
@@ -167,12 +167,6 @@ export const sidebarItems = {
                     path: "/staff/request-stock",
                 },
             ],
-        },
-        {
-            label: "Help Support",
-            icon: HelpCircle,
-            path: null,
-            action: "chat",
         },
     ],
 };

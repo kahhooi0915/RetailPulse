@@ -177,7 +177,7 @@ export default function AdminWarehouseManagement() {
     const goToPurchase = (item) => {
         if (item.status === "HEALTHY") return;
 
-        navigate(`/admin/purchase?product_id=${item.product_id}&branch_id=${item.branch_id}`);
+        navigate(`/admin/purchases?product_id=${item.product_id}&branch_id=${item.branch_id}`);
     };
 
     const approveWarehouseTransfer = async (transfer) => {
@@ -316,6 +316,7 @@ export default function AdminWarehouseManagement() {
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Product Name</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Category</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Warehouse Name</th>
+                                    <th className="border-b px-5 text-xs font-extrabold uppercase">Supplier Contact</th>
                                     <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Quantity In Stock</th>
                                     <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Reorder Level</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Status</th>
@@ -344,6 +345,15 @@ export default function AdminWarehouseManagement() {
                                             </td>
                                             <td className="border-b border-blue-50 px-5 font-extrabold text-purple-700">
                                                 {item.warehouse_name}
+                                            </td>
+                                            <td className="border-b border-blue-50 px-5">
+                                                <p className="font-extrabold text-[#07102f]">{item.preferred_supplier || "-"}</p>
+                                                <p className="mt-1 text-xs font-semibold text-[#6f85a3]">
+                                                    {item.supplier_contact_person || "No contact person"}
+                                                </p>
+                                                <p className="mt-1 break-all text-xs font-semibold text-[#6f85a3]">
+                                                    {[item.supplier_phone, item.supplier_email].filter(Boolean).join(" | ") || "No phone/email"}
+                                                </p>
                                             </td>
                                             <td className="border-b border-blue-50 px-5 text-right font-extrabold text-[#07102f]">
                                                 {item.quantity_in_stock}

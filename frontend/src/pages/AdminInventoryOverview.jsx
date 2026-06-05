@@ -39,6 +39,7 @@ export default function InventoryOverview() {
     const [selectedRecommendation, setSelectedRecommendation] = useState(null);
     const [selectedTransferDetails, setSelectedTransferDetails] = useState(null);
     const [transferDetailLoading, setTransferDetailLoading] = useState(null);
+    const [updatingReorderProductId, setUpdatingReorderProductId] = useState(null);
     const [toast, setToast] = useState(null);
 
     const showToast = (message, type = "success") => {
@@ -268,6 +269,69 @@ export default function InventoryOverview() {
             showToast("Failed to load stock transfer details.", "error");
         } finally {
             setTransferDetailLoading(null);
+        }
+    };
+
+    const applyRecommendedReorderLevel = async (item) => {
+        const productId = Number(item.product_id);
+        const recommendedLevel = Number(item.recommendedReorderLevel);
+
+        if (!productId || !Number.isFinite(recommendedLevel)) {
+            showToast("Unable to apply this reorder recommendation.", "error");
+            return;
+        }
+
+        try {
+            setUpdatingReorderProductId(productId);
+
+            const res = await fetch(`${API}/admin/products/${productId}/reorder-level`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    reorder_level: recommendedLevel,
+                    actor_user_id: user.user_id,
+                }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+                showToast(data.message || "Failed to update reorder level.", "error");
+                return;
+            }
+
+            setProducts((prev) =>
+                prev.map((product) =>
+                    Number(product.product_id) === productId
+                        ? { ...product, reorder_level: recommendedLevel }
+                        : product
+                )
+            );
+            setInventory((prev) =>
+                prev.map((row) =>
+                    Number(row.product_id) === productId
+                        ? { ...row, reorder_level: recommendedLevel }
+                        : row
+                )
+            );
+            setSelectedRecommendation((prev) =>
+                prev && Number(prev.product_id) === productId
+                    ? {
+                          ...prev,
+                          reorder_level: recommendedLevel,
+                          recommendation: getReorderRecommendation(
+                              recommendedLevel,
+                              prev.recommendedReorderLevel
+                          ),
+                      }
+                    : prev
+            );
+
+            showToast(data.message || "Reorder level updated successfully.");
+        } catch (error) {
+            console.error(error);
+            showToast("Failed to update reorder level.", "error");
+        } finally {
+            setUpdatingReorderProductId(null);
         }
     };
 
@@ -516,7 +580,18 @@ export default function InventoryOverview() {
                                                 {item.recommendedReorderLevel}
                                             </td>
                                             <td className="border-b border-blue-50 px-5">
-                                                <RecommendationStatusBadge recommendation={item.recommendation} />
+                                                <RecommendationStatusBadge
+                                                    recommendation={item.recommendation}
+                                                    canApply={
+                                                        Number(item.recommendedReorderLevel) >
+                                                        Number(item.reorder_level)
+                                                    }
+                                                    disabled={
+                                                        updatingReorderProductId ===
+                                                        Number(item.product_id)
+                                                    }
+                                                    onApply={() => applyRecommendedReorderLevel(item)}
+                                                />
                                             </td>
                                             <td className="border-b border-blue-50 pl-5 text-right">
                                                 <button
@@ -751,12 +826,28 @@ function TransferStatusBadge({ status }) {
     );
 }
 
-function RecommendationStatusBadge({ recommendation }) {
+function RecommendationStatusBadge({ recommendation, canApply = false, disabled = false, onApply }) {
     const styles = {
         "Increase Reorder Level": "bg-green-50 text-green-700",
         "Decrease Reorder Level": "bg-orange-50 text-orange-700",
         "Keep Current Level": "bg-blue-50 text-[#1e4db7]",
     };
+
+    if (canApply) {
+        return (
+            <button
+                type="button"
+                onClick={onApply}
+                disabled={disabled}
+                className={`inline-flex rounded-full px-3 py-1 text-xs font-extrabold transition hover:bg-green-100 disabled:cursor-wait disabled:opacity-60 ${
+                    styles[recommendation] || "bg-gray-50 text-gray-600"
+                }`}
+                title="Update current reorder level to the AI recommended level"
+            >
+                {disabled ? "Updating..." : recommendation}
+            </button>
+        );
+    }
 
     return (
         <span

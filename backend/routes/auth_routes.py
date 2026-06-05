@@ -3,6 +3,7 @@ import re
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db import get_connection
+from audit import log_audit
 
 auth_bp = Blueprint("auth_bp", __name__)
 
@@ -138,6 +139,7 @@ def login():
         conn.close()
 
         if user and check_password_hash(user[7], password):
+            log_audit(user[0], "LOGIN", "Authentication", user[0], "User logged into the system.")
             return jsonify({
                 "user_id": user[0],
                 "name": user[1],

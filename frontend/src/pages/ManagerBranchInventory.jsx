@@ -242,6 +242,7 @@ export default function ManagerBranchInventory() {
                     },
                     body: JSON.stringify({
                         quantity_in_stock: Number(editQuantity),
+                        actor_user_id: user.user_id,
                     }),
                 }
             );

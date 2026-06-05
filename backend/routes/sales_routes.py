@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from audit import log_audit
 
 sales_bp = Blueprint("sales_bp", __name__)
 
@@ -15,11 +16,12 @@ def admin_get_sales():
 
         cur.execute("""
             SELECT s.sale_id, s.sale_code, s.user_id, u.name,
-                   s.branch_id, b.branch_name,
+                   s.branch_id, b.branch_name, b.branch_code, b.branch_type,
                    s.sale_date, s.total_amount, s.payment_method
             FROM sale s
             JOIN users u ON s.user_id = u.user_id
             JOIN branch b ON s.branch_id = b.branch_id
+            WHERE b.branch_type = 'BRANCH'
             ORDER BY s.sale_id
         """)
 
@@ -34,9 +36,11 @@ def admin_get_sales():
                 "user_name": row[3],
                 "branch_id": row[4],
                 "branch_name": row[5],
-                "sale_date": row[6].isoformat() if row[6] else None,
-                "total_amount": float(row[7]),
-                "payment_method": row[8]
+                "branch_code": row[6],
+                "branch_type": row[7],
+                "sale_date": row[8].isoformat() if row[8] else None,
+                "total_amount": float(row[9]),
+                "payment_method": row[10]
             })
 
         cur.close()
@@ -162,6 +166,13 @@ def admin_add_sale():
 
         new_sale = cur.fetchone()
         conn.commit()
+        log_audit(
+            user_id,
+            "CREATE_SALE",
+            "POS",
+            new_sale[0],
+            f"Created Sale {new_sale[1]} with total amount RM 0.00."
+        )
 
         return jsonify({
             "message": "Sale created successfully",

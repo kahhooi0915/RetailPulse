@@ -5,7 +5,6 @@ import {
   BarChart3,
   User,
   LogOut,
-  HelpCircle,
   Bell,
   Settings,
   Package,
@@ -29,6 +28,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { motion } from "framer-motion";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
@@ -441,17 +441,6 @@ export default function StaffAnalytics() {
 
           </nav>
 
-          <div className="mt-auto space-y-3">
-            <button
-              onClick={() => setShowHelp(true)}
-              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 text-sm font-semibold text-[#254e7a] ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
-                }`}
-            >
-              <HelpCircle size={17} />
-              {!!sidebarOpen && <span>Help Support</span>}
-            </button>
-
-          </div>
         </aside>
 
         {/* MAIN */}
@@ -594,7 +583,7 @@ export default function StaffAnalytics() {
                 <TrendingUp className="text-orange-600" size={22} />
               </div>
               <h2 className="mt-4 text-3xl font-extrabold">
-                RM {totalSales.toFixed(2)}
+                {formatCurrency(totalSales)}
               </h2>
             </div>
 
@@ -710,7 +699,7 @@ export default function StaffAnalytics() {
                         </div>
 
                         <p className="font-extrabold text-orange-300">
-                          RM {item.revenue.toFixed(2)}
+                          {formatCurrency(item.revenue)}
                         </p>
                       </div>
                     </div>

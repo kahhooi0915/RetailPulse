@@ -1,0 +1,805 @@
+from datetime import datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+import random
+import sys
+
+import psycopg2
+from psycopg2 import sql
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from db import get_connection  # noqa: E402
+
+
+RANDOM_SEED = 20260604
+
+BUSINESS_TABLES = [
+    "sale_detail",
+    "sale",
+    "inventory",
+    "transfer_detail",
+    "stock_transfer_detail",
+    "stock_transfer",
+    "purchase_detail",
+    "purchase",
+    "supplier_product",
+    "supplier",
+    "product",
+    "category",
+    "audit_log",
+]
+
+COUNT_TABLES = {
+    "branches": "branch",
+    "categories": "category",
+    "products": "product",
+    "suppliers": "supplier",
+    "inventory rows": "inventory",
+    "sales": "sale",
+    "sale_detail": "sale_detail",
+    "purchase": "purchase",
+    "stock_transfer": "stock_transfer",
+}
+
+PAYMENT_METHODS = ["CASH", "CARD", "E_WALLET"]
+
+
+def table_exists(cur, table_name):
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        """,
+        (table_name,),
+    )
+    return cur.fetchone() is not None
+
+
+def get_columns(cur, table_name):
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        (table_name,),
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
+def get_table_columns(cur, table_names):
+    return {
+        table_name: get_columns(cur, table_name)
+        for table_name in table_names
+        if table_exists(cur, table_name)
+    }
+
+
+def insert_row(cur, table_name, values, returning=None):
+    columns = get_columns(cur, table_name)
+    filtered = {
+        key: value
+        for key, value in values.items()
+        if key in columns and value is not _SKIP
+    }
+
+    if not filtered:
+        raise ValueError(f"No insertable values for table {table_name}")
+
+    query = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
+        table=sql.Identifier(table_name),
+        cols=sql.SQL(", ").join(sql.Identifier(col) for col in filtered),
+        vals=sql.SQL(", ").join(sql.Placeholder() for _ in filtered),
+    )
+
+    if returning:
+        query += sql.SQL(" RETURNING {}").format(sql.Identifier(returning))
+
+    cur.execute(query, list(filtered.values()))
+    return cur.fetchone()[0] if returning else None
+
+
+def reset_sequence(cur, table_name):
+    cur.execute("SELECT pg_get_serial_sequence(%s, %s)", (table_name, f"{table_name}_id"))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        id_columns = {
+            "sale_detail": "detail_id",
+            "transfer_detail": "transfer_detail_id",
+            "stock_transfer": "transfer_id",
+            "purchase_detail": "purchase_detail_id",
+        }
+        id_column = id_columns.get(table_name)
+        if id_column:
+            cur.execute("SELECT pg_get_serial_sequence(%s, %s)", (table_name, id_column))
+            row = cur.fetchone()
+
+    if row and row[0]:
+        cur.execute(sql.SQL("ALTER SEQUENCE {} RESTART WITH 1").format(sql.SQL(row[0])))
+
+
+def reset_business_data(cur):
+    existing_reset_tables = [
+        table_name for table_name in BUSINESS_TABLES if table_exists(cur, table_name)
+    ]
+
+    if existing_reset_tables:
+        cur.execute(
+            sql.SQL("TRUNCATE TABLE {} RESTART IDENTITY").format(
+                sql.SQL(", ").join(sql.Identifier(table) for table in existing_reset_tables)
+            )
+        )
+
+
+def get_active_users(cur):
+    cur.execute(
+        """
+        SELECT user_id, role, branch_id, status
+        FROM users
+        WHERE COALESCE(status, 'ACTIVE') = 'ACTIVE'
+        ORDER BY user_id
+        """
+    )
+    return [
+        {"user_id": row[0], "role": row[1], "branch_id": row[2], "status": row[3]}
+        for row in cur.fetchall()
+    ]
+
+
+def assign_demo_users(cur, sales_branch_ids):
+    users = get_active_users(cur)
+    branch_roles = {"BRANCH_STAFF", "INVENTORY_MANAGER"}
+    assignable = [user for user in users if user["role"] in branch_roles]
+
+    if not assignable:
+        raise RuntimeError(
+            "No active BRANCH_STAFF or INVENTORY_MANAGER users found. "
+            "Create at least one non-admin branch user before running this seed."
+        )
+
+    for index, user in enumerate(assignable):
+        branch_id = sales_branch_ids[index % len(sales_branch_ids)]
+        cur.execute(
+            "UPDATE users SET branch_id = %s WHERE user_id = %s",
+            (branch_id, user["user_id"]),
+        )
+        user["branch_id"] = branch_id
+
+    return assignable
+
+
+def users_by_branch(users, branch_ids):
+    result = {branch_id: [] for branch_id in branch_ids}
+    for user in users:
+        if user["branch_id"] in result and user["role"] != "SYSTEM_ADMIN":
+            result[user["branch_id"]].append(user["user_id"])
+
+    missing = [branch_id for branch_id, user_ids in result.items() if not user_ids]
+    if missing:
+        fallback_users = [user["user_id"] for user in users if user["role"] != "SYSTEM_ADMIN"]
+        if not fallback_users:
+            raise RuntimeError("No non-admin users available for demo sales.")
+        for branch_id in missing:
+            result[branch_id] = [fallback_users[0]]
+
+    return result
+
+
+def first_user(cur, roles=None):
+    if roles:
+        cur.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE COALESCE(status, 'ACTIVE') = 'ACTIVE'
+              AND role = ANY(%s)
+            ORDER BY user_id
+            LIMIT 1
+            """,
+            (roles,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE COALESCE(status, 'ACTIVE') = 'ACTIVE'
+            ORDER BY user_id
+            LIMIT 1
+            """
+        )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def seed_branches(cur):
+    branches = [
+        {
+            "name": "Warehouse",
+            "address": "Lot 1, RetailPulse Central Warehouse, Melaka",
+            "phone": "012-3010000",
+            "type": "WAREHOUSE",
+        },
+        {
+            "name": "Melaka Sentral Branch",
+            "address": "G-12, Melaka Sentral, Jalan Tun Razak, Melaka",
+            "phone": "012-3011001",
+            "type": "BRANCH",
+        },
+        {
+            "name": "Ayer Keroh Branch",
+            "address": "No. 8, Jalan Ayer Keroh, Melaka",
+            "phone": "012-3011002",
+            "type": "BRANCH",
+        },
+        {
+            "name": "Bukit Katil Branch",
+            "address": "No. 15, Jalan Bukit Katil, Melaka",
+            "phone": "012-3011003",
+            "type": "BRANCH",
+        },
+    ]
+
+    ids = {}
+
+    cur.execute("SELECT branch_id FROM branch ORDER BY branch_id")
+    existing_branch_ids = [row[0] for row in cur.fetchall()]
+
+    for index, branch in enumerate(branches):
+        values = {
+            "branch_name": branch["name"],
+            "branch_address": branch["address"],
+            "phone": branch["phone"],
+            "branch_type": branch["type"],
+        }
+
+        if index < len(existing_branch_ids):
+            branch_id = existing_branch_ids[index]
+            branch_columns = get_columns(cur, "branch")
+            filtered_values = {
+                key: value for key, value in values.items() if key in branch_columns
+            }
+            cur.execute(
+                sql.SQL("UPDATE branch SET {} WHERE branch_id = %s").format(
+                    sql.SQL(", ").join(
+                        sql.SQL("{} = %s").format(sql.Identifier(column))
+                        for column in filtered_values
+                    )
+                ),
+                list(filtered_values.values()) + [branch_id],
+            )
+        else:
+            branch_id = insert_row(cur, "branch", values, returning="branch_id")
+
+        ids[branch["name"]] = branch_id
+
+    extra_branch_ids = existing_branch_ids[len(branches):]
+    if extra_branch_ids:
+        fallback_branch_id = ids["Melaka Sentral Branch"]
+        if table_exists(cur, "users") and "branch_id" in get_columns(cur, "users"):
+            cur.execute(
+                """
+                UPDATE users
+                SET branch_id = %s
+                WHERE branch_id = ANY(%s)
+                  AND role <> 'SYSTEM_ADMIN'
+                """,
+                (fallback_branch_id, extra_branch_ids),
+            )
+            cur.execute(
+                """
+                UPDATE users
+                SET branch_id = NULL
+                WHERE branch_id = ANY(%s)
+                  AND role = 'SYSTEM_ADMIN'
+                """,
+                (extra_branch_ids,),
+            )
+
+        cur.execute(
+            "DELETE FROM branch WHERE branch_id = ANY(%s)",
+            (extra_branch_ids,),
+        )
+
+    cur.execute(
+        """
+        SELECT setval(
+            pg_get_serial_sequence('branch', 'branch_id'),
+            GREATEST((SELECT COALESCE(MAX(branch_id), 0) FROM branch), 1),
+            true
+        )
+        WHERE pg_get_serial_sequence('branch', 'branch_id') IS NOT NULL
+        """
+    )
+
+    return ids
+
+
+def seed_categories(cur):
+    ids = {}
+    for category_name in [
+        "Personal Care",
+        "Beverages",
+        "Stationery",
+        "Household",
+        "Snacks",
+    ]:
+        category_id = insert_row(
+            cur,
+            "category",
+            {"category_name": category_name, "status": "ACTIVE"},
+            returning="category_id",
+        )
+        ids[category_name] = category_id
+    return ids
+
+
+def seed_products(cur, category_ids):
+    product_data = [
+        ("Body Wash", "Personal Care", "Fresh daily body wash for family use.", "bodywash.jpg", 16.90, 12),
+        ("Deodorant 50ML", "Personal Care", "Compact roll-on deodorant for daily freshness.", "deodorant.jpg", 8.90, 10),
+        ("Coca Cola 250ML", "Beverages", "Chilled carbonated soft drink can.", "cocacola.jpg", 2.50, 24),
+        ("Marker Pen", "Stationery", "Black permanent marker pen for office and school.", "default.webp", 3.20, 15),
+        ("Tea Bags", "Beverages", "Classic black tea bags, 25 sachets per box.", "default.webp", 9.90, 10),
+        ("Dishwashing Liquid", "Household", "Lemon dishwashing liquid for kitchen cleaning.", "default.webp", 7.50, 8),
+        ("Shampoo", "Personal Care", "Gentle shampoo for daily hair care.", "shampoo.jpg", 14.90, 10),
+        ("Notebook A5", "Stationery", "A5 ruled notebook for study and office notes.", "default.webp", 4.80, 20),
+        ("Potato Chips", "Snacks", "Crispy salted potato chips snack pack.", "default.webp", 5.90, 18),
+        ("Tissue Roll", "Household", "Soft household tissue roll pack.", "default.webp", 6.90, 16),
+    ]
+
+    ids = {}
+    product_columns = get_columns(cur, "product")
+    for name, category, description, image_name, selling_price, reorder_level in product_data:
+        image_data = None
+        image_mime = None
+        image_path = Path(__file__).resolve().parent / "static" / "images" / "products" / image_name
+        if image_path.exists() and {"product_image_data", "product_image_mime"} <= product_columns:
+            image_data = psycopg2.Binary(image_path.read_bytes())
+            image_mime = "image/webp" if image_path.suffix.lower() == ".webp" else "image/jpeg"
+
+        product_id = insert_row(
+            cur,
+            "product",
+            {
+                "product_name": name,
+                "category_id": category_ids[category],
+                "selling_price": Decimal(str(selling_price)),
+                "reorder_level": reorder_level,
+                "status": "ACTIVE",
+                "description": description,
+                "product_image_data": image_data,
+                "product_image_mime": image_mime,
+            },
+            returning="product_id",
+        )
+        ids[name] = {
+            "product_id": product_id,
+            "selling_price": Decimal(str(selling_price)),
+            "reorder_level": reorder_level,
+        }
+    return ids
+
+
+def seed_suppliers(cur):
+    suppliers = [
+        (
+            "Melaka Retail Supplier Sdn Bhd",
+            "Nur Aisyah",
+            "012-8144555",
+            "sales@melakaretail.example",
+            "No. 22, Jalan Industri, Melaka",
+        ),
+        (
+            "FreshMart Distribution",
+            "Tan Wei Ming",
+            "012-3577888",
+            "orders@freshmart.example",
+            "Lot 18, Ayer Keroh Distribution Park, Melaka",
+        ),
+        (
+            "OfficePro Wholesale",
+            "Siti Hajar",
+            "012-4190333",
+            "support@officepro.example",
+            "No. 7, Jalan Perniagaan, Melaka",
+        ),
+    ]
+
+    ids = {}
+    for name, contact, phone, email, address in suppliers:
+        supplier_id = insert_row(
+            cur,
+            "supplier",
+            {
+                "supplier_name": name,
+                "contact_person": contact,
+                "phone": phone,
+                "email": email,
+                "address": address,
+                "status": "ACTIVE",
+            },
+            returning="supplier_id",
+        )
+        ids[name] = supplier_id
+    return ids
+
+
+def seed_supplier_products(cur, supplier_ids, product_ids):
+    assignments = {
+        "Melaka Retail Supplier Sdn Bhd": [
+            ("Body Wash", 10.50, 4, True),
+            ("Deodorant 50ML", 5.20, 5, True),
+            ("Dishwashing Liquid", 4.60, 3, True),
+            ("Shampoo", 9.20, 4, True),
+            ("Tissue Roll", 4.10, 3, False),
+        ],
+        "FreshMart Distribution": [
+            ("Coca Cola 250ML", 1.55, 2, True),
+            ("Tea Bags", 6.40, 5, True),
+            ("Potato Chips", 3.60, 2, True),
+            ("Tissue Roll", 4.00, 4, True),
+        ],
+        "OfficePro Wholesale": [
+            ("Marker Pen", 1.75, 3, True),
+            ("Notebook A5", 2.65, 4, True),
+        ],
+    }
+
+    seen = set()
+    for supplier_name, items in assignments.items():
+        for product_name, purchase_price, lead_time_days, is_preferred in items:
+            supplier_id = supplier_ids[supplier_name]
+            product_id = product_ids[product_name]["product_id"]
+            if (supplier_id, product_id) in seen:
+                continue
+            seen.add((supplier_id, product_id))
+            insert_row(
+                cur,
+                "supplier_product",
+                {
+                    "supplier_id": supplier_id,
+                    "product_id": product_id,
+                    "purchase_price": Decimal(str(purchase_price)),
+                    "lead_time_days": lead_time_days,
+                    "is_preferred": is_preferred,
+                    "status": "ACTIVE",
+                },
+            )
+
+
+def seed_sales(cur, product_ids, branch_ids, branch_users):
+    branch_profiles = {
+        "Melaka Sentral Branch": {"sales_per_month": 24, "quantity_boost": 1.35},
+        "Ayer Keroh Branch": {"sales_per_month": 15, "quantity_boost": 1.0},
+        "Bukit Katil Branch": {"sales_per_month": 9, "quantity_boost": 0.75},
+    }
+    important_products = [
+        "Body Wash",
+        "Marker Pen",
+        "Tea Bags",
+        "Coca Cola 250ML",
+        "Deodorant 50ML",
+    ]
+    other_products = [name for name in product_ids if name not in important_products]
+    start_date = datetime.now() - timedelta(days=180)
+
+    for month_offset in range(6):
+        month_start = start_date + timedelta(days=month_offset * 30)
+        for branch_name, profile in branch_profiles.items():
+            branch_id = branch_ids[branch_name]
+            user_ids = branch_users[branch_id]
+            sale_count = profile["sales_per_month"]
+
+            for index in range(sale_count):
+                sale_date = month_start + timedelta(
+                    days=random.randint(0, 27),
+                    hours=random.randint(9, 21),
+                    minutes=random.randint(0, 59),
+                )
+                sale_id = insert_row(
+                    cur,
+                    "sale",
+                    {
+                        "user_id": random.choice(user_ids),
+                        "branch_id": branch_id,
+                        "sale_date": sale_date,
+                        "total_amount": Decimal("0.00"),
+                        "payment_method": random.choice(PAYMENT_METHODS),
+                    },
+                    returning="sale_id",
+                )
+
+                selected = [important_products[(index + month_offset) % len(important_products)]]
+                selected += random.sample(other_products, k=random.randint(1, 2))
+                total = Decimal("0.00")
+
+                for product_name in selected:
+                    product = product_ids[product_name]
+                    base_qty = random.randint(1, 4)
+                    quantity = max(1, int(round(base_qty * profile["quantity_boost"])))
+                    unit_price = product["selling_price"]
+                    subtotal = (unit_price * quantity).quantize(Decimal("0.01"))
+                    insert_row(
+                        cur,
+                        "sale_detail",
+                        {
+                            "sale_id": sale_id,
+                            "product_id": product["product_id"],
+                            "quantity": quantity,
+                            "unit_price": unit_price,
+                            "subtotal": subtotal,
+                        },
+                    )
+                    total += subtotal
+
+                cur.execute(
+                    "UPDATE sale SET total_amount = %s WHERE sale_id = %s",
+                    (total.quantize(Decimal("0.01")), sale_id),
+                )
+
+
+def seed_purchases(cur, supplier_ids, product_ids, branch_ids, created_by):
+    purchases = [
+        (
+            "PENDING",
+            "Melaka Retail Supplier Sdn Bhd",
+            datetime.now() - timedelta(days=2),
+            [("Shampoo", 30, 9.20), ("Tissue Roll", 48, 4.10)],
+        ),
+        (
+            "ORDERED",
+            "OfficePro Wholesale",
+            datetime.now() - timedelta(days=7),
+            [("Marker Pen", 60, 1.75), ("Notebook A5", 80, 2.65)],
+        ),
+        (
+            "RECEIVED",
+            "FreshMart Distribution",
+            datetime.now() - timedelta(days=18),
+            [("Coca Cola 250ML", 120, 1.55), ("Tea Bags", 40, 6.40), ("Potato Chips", 75, 3.60)],
+        ),
+    ]
+
+    for status, supplier_name, purchase_date, items in purchases:
+        total = sum(Decimal(str(qty)) * Decimal(str(cost)) for _, qty, cost in items)
+        purchase_id = insert_row(
+            cur,
+            "purchase",
+            {
+                "supplier_id": supplier_ids[supplier_name],
+                "branch_id": branch_ids["Warehouse"],
+                "created_by": created_by,
+                "purchase_date": purchase_date,
+                "status": status,
+                "total_amount": total.quantize(Decimal("0.01")),
+            },
+            returning="purchase_id",
+        )
+        for product_name, quantity, unit_cost in items:
+            cost = Decimal(str(unit_cost))
+            insert_row(
+                cur,
+                "purchase_detail",
+                {
+                    "purchase_id": purchase_id,
+                    "product_id": product_ids[product_name]["product_id"],
+                    "quantity": quantity,
+                    "unit_cost": cost,
+                    "subtotal": (cost * quantity).quantize(Decimal("0.01")),
+                },
+            )
+
+
+def seed_transfers(cur, product_ids, branch_ids, requested_by, approved_by, received_by):
+    transfers = [
+        (
+            "RECEIVED",
+            "Warehouse",
+            "Melaka Sentral Branch",
+            [("Body Wash", 20), ("Coca Cola 250ML", 36)],
+            None,
+        ),
+        (
+            "APPROVED",
+            "Warehouse",
+            "Ayer Keroh Branch",
+            [("Marker Pen", 15), ("Tea Bags", 12)],
+            None,
+        ),
+        (
+            "PENDING",
+            "Warehouse",
+            "Bukit Katil Branch",
+            [("Deodorant 50ML", 10), ("Potato Chips", 12)],
+            None,
+        ),
+        (
+            "REJECTED",
+            "Melaka Sentral Branch",
+            "Bukit Katil Branch",
+            [("Notebook A5", 10)],
+            "Source branch stock reserved for weekend promotion.",
+        ),
+    ]
+
+    for status, from_branch, to_branch, items, reject_reason in transfers:
+        transfer_values = {
+            "from_branch_id": branch_ids[from_branch],
+            "to_branch_id": branch_ids[to_branch],
+            "status": status,
+            "requested_by": requested_by,
+            "approved_by": approved_by if status in {"APPROVED", "RECEIVED", "REJECTED"} else None,
+            "received_by": received_by if status == "RECEIVED" else None,
+            "reject_reason": reject_reason,
+            "approved_at": datetime.now() - timedelta(days=2)
+            if status in {"APPROVED", "RECEIVED", "REJECTED"}
+            else None,
+            "transfer_date": datetime.now() - timedelta(days=random.randint(1, 25)),
+        }
+        transfer_id = insert_row(
+            cur,
+            "stock_transfer",
+            transfer_values,
+            returning="transfer_id",
+        )
+
+        for product_name, quantity in items:
+            insert_row(
+                cur,
+                "transfer_detail",
+                {
+                    "transfer_id": transfer_id,
+                    "product_id": product_ids[product_name]["product_id"],
+                    "quantity": quantity,
+                },
+            )
+
+
+def seed_inventory(cur, product_ids, branch_ids):
+    quantities = {
+        "Warehouse": {
+            "Body Wash": 80,
+            "Deodorant 50ML": 55,
+            "Coca Cola 250ML": 8,
+            "Marker Pen": 95,
+            "Tea Bags": 64,
+            "Dishwashing Liquid": 42,
+            "Shampoo": 70,
+            "Notebook A5": 120,
+            "Potato Chips": 90,
+            "Tissue Roll": 110,
+        },
+        "Melaka Sentral Branch": {
+            "Body Wash": 35,
+            "Deodorant 50ML": 18,
+            "Coca Cola 250ML": 46,
+            "Marker Pen": 22,
+            "Tea Bags": 17,
+            "Dishwashing Liquid": 15,
+            "Shampoo": 24,
+            "Notebook A5": 30,
+            "Potato Chips": 40,
+            "Tissue Roll": 27,
+        },
+        "Ayer Keroh Branch": {
+            "Body Wash": 8,
+            "Deodorant 50ML": 12,
+            "Coca Cola 250ML": 30,
+            "Marker Pen": 9,
+            "Tea Bags": 7,
+            "Dishwashing Liquid": 10,
+            "Shampoo": 13,
+            "Notebook A5": 18,
+            "Potato Chips": 15,
+            "Tissue Roll": 22,
+        },
+        "Bukit Katil Branch": {
+            "Body Wash": 5,
+            "Deodorant 50ML": 0,
+            "Coca Cola 250ML": 18,
+            "Marker Pen": 6,
+            "Tea Bags": 11,
+            "Dishwashing Liquid": 4,
+            "Shampoo": 6,
+            "Notebook A5": 9,
+            "Potato Chips": 8,
+            "Tissue Roll": 14,
+        },
+    }
+
+    for branch_name, products in quantities.items():
+        for product_name, quantity in products.items():
+            insert_row(
+                cur,
+                "inventory",
+                {
+                    "product_id": product_ids[product_name]["product_id"],
+                    "branch_id": branch_ids[branch_name],
+                    "quantity_in_stock": quantity,
+                    "last_updated": datetime.now(),
+                },
+            )
+
+
+def print_summary(cur):
+    print("\nDemo seed summary")
+    print("-----------------")
+    for label, table_name in COUNT_TABLES.items():
+        if table_exists(cur, table_name):
+            cur.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table_name)))
+            print(f"{label}: {cur.fetchone()[0]}")
+        else:
+            print(f"{label}: table not found")
+
+
+class _Skip:
+    pass
+
+
+_SKIP = _Skip()
+
+
+def main():
+    random.seed(RANDOM_SEED)
+    conn = None
+    cur = None
+
+    try:
+        conn = get_connection()
+        conn.autocommit = False
+        cur = conn.cursor()
+
+        print("Starting RetailPulse demo reset. Existing users will be preserved.")
+        reset_business_data(cur)
+
+        branch_ids = seed_branches(cur)
+        sales_branch_ids = [
+            branch_ids["Melaka Sentral Branch"],
+            branch_ids["Ayer Keroh Branch"],
+            branch_ids["Bukit Katil Branch"],
+        ]
+        assigned_users = assign_demo_users(cur, sales_branch_ids)
+        branch_users = users_by_branch(assigned_users, sales_branch_ids)
+
+        category_ids = seed_categories(cur)
+        product_ids = seed_products(cur, category_ids)
+        supplier_ids = seed_suppliers(cur)
+        seed_supplier_products(cur, supplier_ids, product_ids)
+
+        seed_sales(cur, product_ids, branch_ids, branch_users)
+
+        created_by = first_user(cur, ["SYSTEM_ADMIN", "INVENTORY_MANAGER"]) or assigned_users[0]["user_id"]
+        requested_by = assigned_users[0]["user_id"]
+        approved_by = first_user(cur, ["SYSTEM_ADMIN", "INVENTORY_MANAGER"]) or requested_by
+        received_by = first_user(cur, ["INVENTORY_MANAGER"]) or requested_by
+
+        seed_purchases(cur, supplier_ids, product_ids, branch_ids, created_by)
+        seed_transfers(cur, product_ids, branch_ids, requested_by, approved_by, received_by)
+        seed_inventory(cur, product_ids, branch_ids)
+
+        print_summary(cur)
+        conn.commit()
+        print("\nDemo data reset and seed completed successfully.")
+
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        print("\nERROR: Demo data reset failed. All changes were rolled back.")
+        print(f"Reason: {exc}")
+        raise
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+if __name__ == "__main__":
+    main()

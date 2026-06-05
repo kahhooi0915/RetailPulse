@@ -5,7 +5,6 @@ import {
   BarChart3,
   User,
   LogOut,
-  HelpCircle,
   Bell,
   Settings,
   Save,
@@ -260,15 +259,6 @@ export default function UserProfile() {
             )}
           </nav>
 
-          <div className="mt-auto space-y-3">
-            <button
-              onClick={() => setShowHelp(true)}
-              className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 text-sm font-semibold text-[#254e7a]"
-            >
-              <HelpCircle size={17} />
-              <span>Help Support</span>
-            </button>
-          </div>
         </aside>
 
         {/* MAIN */}

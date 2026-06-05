@@ -5,23 +5,33 @@ import {
   ArrowLeftRight,
   BarChart3,
   Building2,
+  FileDown,
   FolderKanban,
   Package,
+  Printer,
   ShoppingCart,
   TrendingUp,
   Users,
 } from "lucide-react";
 
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
   PieChart,
   Pie,
   Cell,
   Tooltip,
   ResponsiveContainer,
   Legend,
+  LabelList,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 import DashboardLayout from "../layouts/DashboardLayout";
+import { downloadPDF } from "../utils/downloadPDF";
+import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
@@ -38,7 +48,9 @@ export default function AdminDashboard() {
   const [dashboardSummary, setDashboardSummary] = useState({
     pending_transfers: 0,
   });
+  const [recentActivity, setRecentActivity] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isPdfGenerating, setIsPdfGenerating] = useState(false);
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [settingsData] = useState(() => {
@@ -86,6 +98,7 @@ export default function AdminDashboard() {
         inventoryRes,
         salesRes,
         dashboardSummaryRes,
+        recentActivityRes,
       ] = await Promise.all([
         fetch(`${API_BASE}/admin/users`),
         fetch(`${API_BASE}/admin/branches`),
@@ -94,6 +107,7 @@ export default function AdminDashboard() {
         fetch(`${API_BASE}/admin/inventory`),
         fetch(`${API_BASE}/admin/sales`),
         fetch(`${API_BASE}/admin/dashboard/summary`),
+        fetch(`${API_BASE}/admin/audit-logs?user_id=${user.user_id}&limit=5`),
       ]);
 
       const usersData = await usersRes.json();
@@ -103,6 +117,7 @@ export default function AdminDashboard() {
       const inventoryData = await inventoryRes.json();
       const salesData = await salesRes.json();
       const dashboardSummaryData = await dashboardSummaryRes.json();
+      const recentActivityData = await recentActivityRes.json();
 
       setUsers(Array.isArray(usersData) ? usersData : []);
       setBranches(Array.isArray(branchesData) ? branchesData : []);
@@ -111,6 +126,7 @@ export default function AdminDashboard() {
       setInventory(Array.isArray(inventoryData) ? inventoryData : []);
       setSales(Array.isArray(salesData) ? salesData : []);
       setDashboardSummary(dashboardSummaryData || { pending_transfers: 0 });
+      setRecentActivity(Array.isArray(recentActivityData) ? recentActivityData : []);
     } catch (error) {
       console.error(error);
       alert("Failed to load admin dashboard data.");
@@ -121,7 +137,36 @@ export default function AdminDashboard() {
 
   const refreshData = () => loadData();
 
-  const formatCurrency = (amount) => `RM ${Number(amount || 0).toFixed(2)}`;
+  const generatedDateTime = new Date().toLocaleString();
+
+  const generatedDateForFile = () => {
+    const generatedDate = new Date();
+    const year = generatedDate.getFullYear();
+    const month = String(generatedDate.getMonth() + 1).padStart(2, "0");
+    const day = String(generatedDate.getDate()).padStart(2, "0");
+    const hours = String(generatedDate.getHours()).padStart(2, "0");
+    const minutes = String(generatedDate.getMinutes()).padStart(2, "0");
+    return `${year}${month}${day}_${hours}${minutes}`;
+  };
+
+  const handlePrintDashboard = () => {
+    window.print();
+  };
+
+  const handleExportSummaryPdf = async () => {
+    try {
+      setIsPdfGenerating(true);
+      document.body.classList.add("exporting-admin-dashboard");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await downloadPDF({
+        elementId: "admin-dashboard-report-content",
+        fileName: `RetailPulse_Admin_Dashboard_${generatedDateForFile()}.pdf`,
+      });
+    } finally {
+      document.body.classList.remove("exporting-admin-dashboard");
+      setIsPdfGenerating(false);
+    }
+  };
 
   const totalSales = sales.reduce(
     (sum, sale) => sum + Number(sale.total_amount || 0),
@@ -152,8 +197,12 @@ export default function AdminDashboard() {
     }
   }, [lowStockItems.length]);
 
+  const salesBranches = useMemo(() => {
+    return branches.filter((branch) => branch.branch_type === "BRANCH");
+  }, [branches]);
+
   const branchPerformance = useMemo(() => {
-    return branches.map((branch) => {
+    return salesBranches.map((branch) => {
       const branchSales = sales.filter(
         (sale) => Number(sale.branch_id) === Number(branch.branch_id)
       );
@@ -167,17 +216,21 @@ export default function AdminDashboard() {
         transactions: branchSales.length,
       };
     });
-  }, [branches, sales]);
+  }, [salesBranches, sales]);
 
-  const top10Branches = [...branchPerformance]
+  const branchesWithSales = branchPerformance.filter(
+    (branch) => Number(branch.revenue || 0) > 0 || Number(branch.transactions || 0) > 0
+  );
+
+  const top5Branches = [...branchesWithSales]
     .sort((a, b) => Number(b.revenue || 0) - Number(a.revenue || 0))
-    .slice(0, 10);
+    .slice(0, 5);
 
-  const bottom5Branches = [...branchPerformance]
+  const bottom5Branches = [...branchesWithSales]
     .sort((a, b) => Number(a.revenue || 0) - Number(b.revenue || 0))
     .slice(0, 5);
 
-  const branchSalesPieData = top10Branches.slice(0, 5).map((branch) => ({
+  const branchSalesPieData = top5Branches.map((branch) => ({
     name: branch.branch_name.replace("RetailPulse ", ""),
     value: Number(branch.revenue || 0),
   }));
@@ -210,21 +263,189 @@ export default function AdminDashboard() {
   }, [inventory]);
 
   return (
-    <DashboardLayout
-      user={user}
-      title="Admin Dashboard"
-      subtitle="Monitor users, branches, products, inventory, sales, and system performance."
-      modelText={`Current View: ${settingsData.dashboardView}`}
-      onRefresh={refreshData}
-      onOpenNotifications={() => {
-        setShowNotifications(true);
-        setNotificationRead(true);
-        sessionStorage.setItem("adminNotificationRead", "true");
-      }}
-      notificationCount={notificationCount}
-      compactMode={settingsData.compactMode}
-    >
-      <div className={settingsData.compactMode ? "space-y-5" : "space-y-6"}>
+    <>
+      <style>
+        {`
+          .admin-dashboard-report-cover {
+            display: none;
+          }
+
+          .exporting-admin-dashboard .admin-dashboard-report-cover {
+            display: block;
+          }
+
+          .exporting-admin-dashboard .admin-dashboard-actions {
+            display: none !important;
+          }
+
+          .exporting-admin-dashboard #admin-dashboard-report-content {
+            background: #eef6fb;
+            padding: 24px;
+          }
+
+          @media print {
+            @page {
+              size: A4;
+              margin: 10mm;
+            }
+
+            html,
+            body,
+            #root {
+              height: auto !important;
+              overflow: visible !important;
+              background: #eef6fb !important;
+            }
+
+            body * {
+              visibility: hidden !important;
+            }
+
+            #admin-dashboard-report-content,
+            #admin-dashboard-report-content * {
+              visibility: visible !important;
+            }
+
+            #admin-dashboard-report-content {
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              background: #eef6fb !important;
+              color: #07102f !important;
+              padding: 18px !important;
+              print-color-adjust: exact;
+              -webkit-print-color-adjust: exact;
+            }
+
+            .admin-dashboard-report-cover {
+              display: none !important;
+            }
+
+            .admin-dashboard-print-header {
+              display: block !important;
+            }
+
+            .admin-dashboard-actions,
+            aside,
+            nav {
+              display: none !important;
+            }
+
+            #admin-dashboard-report-content section,
+            #admin-dashboard-report-content .report-panel {
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            #admin-dashboard-report-content .shadow-sm,
+            #admin-dashboard-report-content .shadow-xl {
+              box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+            }
+
+            #admin-dashboard-report-content .rounded-2xl {
+              border-radius: 16px !important;
+            }
+
+            #admin-dashboard-report-content .bg-white {
+              background-color: #ffffff !important;
+            }
+
+            #admin-dashboard-report-content .bg-\\[\\#eef6fb\\] {
+              background-color: #eef6fb !important;
+            }
+
+            #admin-dashboard-report-content .bg-\\[\\#f8fcff\\] {
+              background-color: #f8fcff !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-summary-grid {
+              grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+              gap: 14px !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-summary-grid > div {
+              padding: 16px !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-summary-grid h2 {
+              font-size: 18px !important;
+              line-height: 1.25 !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-summary-grid p {
+              letter-spacing: 0.04em !important;
+            }
+
+            #admin-dashboard-report-content table {
+              font-size: 11px !important;
+            }
+          }
+        `}
+      </style>
+
+      <DashboardLayout
+        user={user}
+        title="Admin Dashboard"
+        subtitle="Monitor users, branches, products, inventory, sales, and system performance."
+        modelText={`Current View: ${settingsData.dashboardView}`}
+        onRefresh={refreshData}
+        onOpenNotifications={() => {
+          setShowNotifications(true);
+          setNotificationRead(true);
+          sessionStorage.setItem("adminNotificationRead", "true");
+        }}
+        notificationCount={notificationCount}
+        compactMode={settingsData.compactMode}
+        headerActions={
+          <div className="admin-dashboard-actions flex flex-wrap items-center justify-end gap-2">
+            <DashboardActionButton
+              icon={Printer}
+              label="Print Dashboard"
+              onClick={handlePrintDashboard}
+            />
+            <DashboardActionButton
+              icon={FileDown}
+              label={isPdfGenerating ? "Generating PDF..." : "Export Summary PDF"}
+              onClick={handleExportSummaryPdf}
+              disabled={isPdfGenerating || loading}
+              primary
+            />
+          </div>
+        }
+      >
+        <div
+          id="admin-dashboard-report-content"
+          className="admin-dashboard-report-content"
+        >
+          <div className="admin-dashboard-print-header mb-6 hidden">
+            <h1 className="text-3xl font-extrabold text-[#07102f]">
+              Admin Dashboard
+            </h1>
+            <p className="mt-1 text-sm text-[#6f85a3]">
+              Monitor users, branches, products, inventory, sales, and system performance.
+            </p>
+            <p className="mt-1 text-xs font-bold text-[#1e4db7]">
+              Current View: {settingsData.dashboardView}
+            </p>
+          </div>
+          <div className="admin-dashboard-report-cover rounded-2xl bg-white p-6 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#1e4db7]">
+              RetailPulse
+            </p>
+            <h2 className="mt-2 text-2xl font-extrabold text-[#07102f]">
+              Admin Dashboard Summary
+            </h2>
+            <p className="mt-1 text-sm text-[#6f85a3]">
+              Management snapshot for users, branches, products, inventory, sales,
+              and system operations.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs font-bold text-[#17325c]">
+              <span>Generated: {generatedDateTime}</span>
+              <span>Current View: {settingsData.dashboardView}</span>
+            </div>
+          </div>
+          <div className={settingsData.compactMode ? "space-y-5" : "space-y-6"}>
         {loading ? (
           <div className="grid min-h-[70vh] place-items-center text-[#6f85a3]">
             <div className="text-center">
@@ -234,14 +455,14 @@ export default function AdminDashboard() {
           </div>
         ) : (
           <>
-            <section className="grid grid-cols-2 gap-5 xl:grid-cols-4">
+            <section className="admin-dashboard-summary-grid grid grid-cols-2 gap-5 xl:grid-cols-4">
               <SummaryCard title="Total Users" value={users.length} icon={Users} color="text-[#1e4db7]" />
               <SummaryCard title="Branches" value={branches.length} icon={Building2} color="text-[#1e4db7]" />
               <SummaryCard title="Products" value={products.length} icon={Package} color="text-green-600" />
               <SummaryCard title="Categories" value={categories.length} icon={FolderKanban} color="text-[#07102f]" />
             </section>
 
-            <section className="grid grid-cols-2 gap-5 xl:grid-cols-4">
+            <section className="admin-dashboard-summary-grid grid grid-cols-2 gap-5 xl:grid-cols-4">
               <SummaryCard title="Total Sales" value={formatCurrency(totalSales)} icon={TrendingUp} color="text-green-600" />
               <SummaryCard title="Sales Records" value={sales.length} icon={ShoppingCart} color="text-[#1e4db7]" />
               <SummaryCard
@@ -257,45 +478,17 @@ export default function AdminDashboard() {
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
               <div className="rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-extrabold text-[#07102f]">
-                  Branch Sales Performance
+                  Top Performing Sales Branches
                 </h2>
                 <p className="mt-1 text-sm text-[#6f85a3]">
-                  Revenue comparison across all branches.
+                  Top 5 sales branches with the highest revenue.
                 </p>
 
-                <div className="mt-5 space-y-4">
-                  {top10Branches.map((branch) => {
-                    const maxRevenue = Math.max(
-                      ...branchPerformance.map((item) => item.revenue),
-                      1
-                    );
-                    const width = `${(branch.revenue / maxRevenue) * 100}%`;
-
-                    return (
-                      <div key={branch.branch_id}>
-                        <div className="mb-2 flex items-center justify-between text-sm">
-                          <div className="font-extrabold text-[#17325c]">
-                            {branch.branch_name}
-                          </div>
-                          <div className="font-bold text-[#6f85a3]">
-                            {formatCurrency(branch.revenue)}
-                          </div>
-                        </div>
-
-                        <div className="h-3 overflow-hidden rounded-full bg-[#eef6fb]">
-                          <div
-                            className="h-full rounded-full bg-[#1e4db7]"
-                            style={{ width }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {branchPerformance.length === 0 && (
-                    <EmptyBox text="No branch performance data found." />
-                  )}
-                </div>
+                <BranchRevenueBarChart
+                  branches={top5Branches}
+                  formatCurrency={formatCurrency}
+                  barColor="#1e4db7"
+                />
               </div>
 
               <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -396,37 +589,62 @@ export default function AdminDashboard() {
             <section>
               <div className="rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-extrabold text-[#07102f]">
-                  Lowest Performing Branches
+                  Lowest Performing Sales Branches
                 </h2>
                 <p className="mt-1 text-sm text-[#6f85a3]">
-                  Bottom 5 branches with the lowest sales revenue.
+                  Bottom 5 sales branches with the lowest revenue.
                 </p>
 
-                <div className="mt-5 space-y-4">
-                  {bottom5Branches.map((branch) => (
-                    <div
-                      key={branch.branch_id}
-                      className="flex items-center justify-between rounded-2xl bg-[#fff5f5] px-4 py-4"
-                    >
-                      <div>
-                        <p className="font-extrabold text-[#17325c]">
-                          {branch.branch_name}
-                        </p>
-                        <p className="text-xs font-semibold text-[#6f85a3]">
-                          {branch.branch_code}
-                        </p>
-                      </div>
+                <BranchRevenueBarChart
+                  branches={bottom5Branches}
+                  formatCurrency={formatCurrency}
+                  barColor="#ef4444"
+                />
+              </div>
+            </section>
 
-                      <span className="font-extrabold text-red-500">
-                        {formatCurrency(branch.revenue)}
-                      </span>
-                    </div>
-                  ))}
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
+                Recent Activity
+              </h2>
 
-                  {bottom5Branches.length === 0 && (
-                    <EmptyBox text="No branch sales data available." />
-                  )}
-                </div>
+              <div className="overflow-hidden rounded-2xl border border-blue-50">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
+                    <tr>
+                      <th className="px-4 py-3">Timestamp</th>
+                      <th className="px-4 py-3">User</th>
+                      <th className="px-4 py-3">Action</th>
+                      <th className="px-4 py-3">Description</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {recentActivity.map((item) => (
+                      <tr key={item.audit_id} className="border-t">
+                        <td className="px-4 py-4 font-semibold">
+                          {formatDateTime(item.created_at)}
+                        </td>
+                        <td className="px-4 py-4 font-bold">{item.user_name}</td>
+                        <td className="px-4 py-4 font-bold text-[#1e4db7]">{item.action}</td>
+                        <td className="px-4 py-4 text-[#4c6280]">
+                          {shortText(item.description)}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {recentActivity.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan="4"
+                          className="px-4 py-6 text-center font-semibold text-[#6f85a3]"
+                        >
+                          No recent activity found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </section>
 
@@ -560,7 +778,8 @@ export default function AdminDashboard() {
             </section>
           </>
         )}
-      </div>
+          </div>
+        </div>
 
       {showNotifications && (
         <div className="fixed inset-0 z-50">
@@ -603,7 +822,32 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
-    </DashboardLayout>
+      </DashboardLayout>
+    </>
+  );
+}
+
+function DashboardActionButton({
+  icon: Icon,
+  label,
+  onClick,
+  disabled = false,
+  primary = false,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-extrabold shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-wait disabled:translate-y-0 disabled:bg-gray-200 disabled:text-gray-500 sm:text-sm ${
+        primary
+          ? "bg-[#0c2f73] text-white hover:bg-[#103986]"
+          : "border border-blue-100 bg-white text-[#17325c] hover:border-[#1e4db7] hover:bg-[#f8fcff] hover:text-[#1e4db7]"
+      }`}
+    >
+      <Icon size={16} />
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -630,6 +874,16 @@ function SummaryCard({ title, value, icon: Icon, color, helperText }) {
   );
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
+function shortText(value) {
+  if (!value) return "-";
+  return value.length > 80 ? `${value.slice(0, 80)}...` : value;
+}
+
 function ActivityDot({ color, title, desc }) {
   return (
     <div className="flex gap-3">
@@ -638,6 +892,73 @@ function ActivityDot({ color, title, desc }) {
         <p className="font-extrabold text-[#17325c]">{title}</p>
         <p className="mt-1 text-sm text-[#6f85a3]">{desc}</p>
       </div>
+    </div>
+  );
+}
+
+function BranchRevenueBarChart({ branches, formatCurrency, barColor }) {
+  if (branches.length === 0) {
+    return <EmptyBox text="No sales data available." />;
+  }
+
+  return (
+    <div className="mt-6 h-[320px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={branches}
+          layout="vertical"
+          margin={{ top: 8, right: 28, left: 18, bottom: 8 }}
+        >
+          <CartesianGrid stroke="#eef6fb" horizontal={false} />
+          <XAxis
+            type="number"
+            tickFormatter={(value) => formatCurrency(value)}
+            tick={{ fill: "#6f85a3", fontSize: 12, fontWeight: 700 }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            type="category"
+            dataKey="branch_name"
+            width={170}
+            tick={{ fill: "#17325c", fontSize: 12, fontWeight: 800 }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip
+            cursor={{ fill: "#f8fcff" }}
+            content={<BranchRevenueTooltip formatCurrency={formatCurrency} />}
+          />
+          <Bar dataKey="revenue" fill={barColor} radius={[0, 8, 8, 0]} barSize={24}>
+            <LabelList
+              dataKey="revenue"
+              position="right"
+              formatter={(value) => formatCurrency(value)}
+              fill="#17325c"
+              fontSize={12}
+              fontWeight={800}
+            />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function BranchRevenueTooltip({ active, payload, formatCurrency }) {
+  if (!active || !payload?.length) return null;
+
+  const branch = payload[0].payload;
+
+  return (
+    <div className="rounded-2xl border border-blue-50 bg-white p-4 text-sm shadow-xl">
+      <p className="font-extrabold text-[#07102f]">{branch.branch_name}</p>
+      <p className="mt-1 text-xs font-bold text-[#6f85a3]">
+        {branch.branch_code || "-"}
+      </p>
+      <p className="mt-3 font-extrabold text-[#1e4db7]">
+        {formatCurrency(branch.revenue)}
+      </p>
     </div>
   );
 }

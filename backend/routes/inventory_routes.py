@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from audit import get_actor_user_id, log_audit
 
 inventory_bp = Blueprint("inventory_bp", __name__)
 
@@ -240,6 +241,7 @@ def admin_add_inventory():
 def admin_update_inventory(product_id, branch_id):
     try:
         data = request.get_json()
+        actor_user_id = get_actor_user_id(data)
 
         quantity_in_stock = data.get("quantity_in_stock")
 
@@ -253,12 +255,15 @@ def admin_update_inventory(product_id, branch_id):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT 1
-            FROM inventory
-            WHERE product_id = %s AND branch_id = %s
+            SELECT p.product_name, b.branch_name
+            FROM inventory i
+            JOIN product p ON i.product_id = p.product_id
+            JOIN branch b ON i.branch_id = b.branch_id
+            WHERE i.product_id = %s AND i.branch_id = %s
         """, (product_id, branch_id))
+        inventory_row = cur.fetchone()
 
-        if not cur.fetchone():
+        if not inventory_row:
             cur.close()
             conn.close()
             return jsonify({"message": "Inventory record not found"}), 404
@@ -275,6 +280,13 @@ def admin_update_inventory(product_id, branch_id):
         ))
 
         conn.commit()
+        log_audit(
+            actor_user_id,
+            "UPDATE_INVENTORY",
+            "Inventory",
+            product_id,
+            f"Updated inventory for {inventory_row[0]} at {inventory_row[1]} to {quantity_in_stock} unit(s)."
+        )
         cur.close()
         conn.close()
 
@@ -403,11 +415,32 @@ def admin_warehouse_stock():
                        WHEN i.quantity_in_stock <= COALESCE(p.reorder_level, 0) THEN 'LOW_STOCK'
                        ELSE 'HEALTHY'
                    END AS status,
-                   i.last_updated
+                   i.last_updated,
+                   supplier_choice.supplier_id,
+                   supplier_choice.supplier_name,
+                   supplier_choice.contact_person,
+                   supplier_choice.phone,
+                   supplier_choice.email,
+                   supplier_choice.purchase_price
             FROM inventory i
             JOIN product p ON i.product_id = p.product_id
             LEFT JOIN category c ON p.category_id = c.category_id
             JOIN branch b ON i.branch_id = b.branch_id
+            LEFT JOIN LATERAL (
+                SELECT sp.supplier_id,
+                       s.supplier_name,
+                       s.contact_person,
+                       s.phone,
+                       s.email,
+                       sp.purchase_price
+                FROM supplier_product sp
+                JOIN supplier s ON sp.supplier_id = s.supplier_id
+                WHERE sp.product_id = i.product_id
+                  AND sp.status = 'ACTIVE'
+                  AND s.status = 'ACTIVE'
+                ORDER BY sp.is_preferred DESC, sp.purchase_price ASC, s.supplier_name
+                LIMIT 1
+            ) supplier_choice ON TRUE
             WHERE b.branch_type = 'WAREHOUSE'
             ORDER BY b.branch_name, p.product_name
         """)
@@ -426,7 +459,13 @@ def admin_warehouse_stock():
                 "quantity_in_stock": row[6],
                 "reorder_level": row[7],
                 "status": row[8],
-                "last_updated": row[9].isoformat() if row[9] else None
+                "last_updated": row[9].isoformat() if row[9] else None,
+                "supplier_id": row[10],
+                "preferred_supplier": row[11] if row[10] else "No supplier assigned",
+                "supplier_contact_person": row[12],
+                "supplier_phone": row[13],
+                "supplier_email": row[14],
+                "purchase_price": _to_float(row[15]) if row[15] is not None else None
             })
 
         _close(conn, cur)
