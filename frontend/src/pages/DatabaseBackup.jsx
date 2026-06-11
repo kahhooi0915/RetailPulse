@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     AlertTriangle,
@@ -9,6 +9,8 @@ import {
     HardDrive,
     Loader2,
     Plus,
+    RotateCcw,
+    ShieldCheck,
     XCircle,
 } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
@@ -17,27 +19,16 @@ const API_BASE = "http://localhost:5000";
 
 export default function DatabaseBackupPage() {
     const navigate = useNavigate();
-    const [user, setUser] = useState(null);
+    const [user] = useState(() => JSON.parse(sessionStorage.getItem("user")));
     const [backups, setBackups] = useState([]);
     const [storageUsed, setStorageUsed] = useState(0);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
+    const [verifying, setVerifying] = useState(false);
+    const [restoring, setRestoring] = useState(false);
+    const [selectedBackup, setSelectedBackup] = useState("");
+    const [verifiedBackup, setVerifiedBackup] = useState("");
     const [alert, setAlert] = useState(null);
-
-    useEffect(() => {
-        const savedUser = JSON.parse(sessionStorage.getItem("user"));
-        if (!savedUser || savedUser.role !== "SYSTEM_ADMIN") {
-            navigate("/");
-            return;
-        }
-        setUser(savedUser);
-    }, [navigate]);
-
-    useEffect(() => {
-        if (user) {
-            loadBackups();
-        }
-    }, [user]);
 
     const latestBackup = backups[0];
     const backupStatus = backups.length > 0 ? "Ready" : "No backups";
@@ -66,7 +57,9 @@ export default function DatabaseBackupPage() {
         [backups.length, backupStatus, creating, latestBackup, storageUsed]
     );
 
-    const loadBackups = async () => {
+    const loadBackups = useCallback(async () => {
+        if (!user) return;
+
         try {
             setLoading(true);
             const res = await fetch(`${API_BASE}/admin/backups?user_id=${user.user_id}`);
@@ -76,6 +69,7 @@ export default function DatabaseBackupPage() {
             }
             setBackups(Array.isArray(data.backups) ? data.backups : []);
             setStorageUsed(data.storage_used || 0);
+            setSelectedBackup((current) => current || data.backups?.[0]?.filename || "");
         } catch (error) {
             setAlert({ type: "error", message: error.message });
             setBackups([]);
@@ -83,7 +77,17 @@ export default function DatabaseBackupPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [user]);
+
+    useEffect(() => {
+        if (!user || user.role !== "SYSTEM_ADMIN") {
+            navigate("/");
+            return;
+        }
+
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        loadBackups();
+    }, [loadBackups, navigate, user]);
 
     const createBackup = async () => {
         try {
@@ -107,6 +111,75 @@ export default function DatabaseBackupPage() {
             setAlert({ type: "error", message: error.message });
         } finally {
             setCreating(false);
+        }
+    };
+
+    const verifyBackup = async () => {
+        if (!selectedBackup) {
+            setAlert({ type: "error", message: "Select a backup file before verification." });
+            return;
+        }
+
+        try {
+            setVerifying(true);
+            setVerifiedBackup("");
+            setAlert(null);
+            const res = await fetch(`${API_BASE}/admin/backups/verify`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: user.user_id, filename: selectedBackup }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.message || "Backup verification failed.");
+            }
+            setVerifiedBackup(selectedBackup);
+            setAlert({ type: "success", message: `${data.message}: ${selectedBackup}` });
+        } catch (error) {
+            setAlert({ type: "error", message: error.message });
+        } finally {
+            setVerifying(false);
+        }
+    };
+
+    const restoreBackup = async () => {
+        if (!selectedBackup || verifiedBackup !== selectedBackup) {
+            setAlert({ type: "error", message: "Verify the selected backup before restoring." });
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `Restore database from ${selectedBackup}? Current data will be replaced. A safety backup will be created first.`
+        );
+        if (!confirmed) return;
+
+        try {
+            setRestoring(true);
+            setAlert(null);
+            const res = await fetch(`${API_BASE}/admin/backups/restore`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    user_id: user.user_id,
+                    filename: selectedBackup,
+                    confirm: "RESTORE",
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.message || "Database restore failed.");
+            }
+            const duration = data.duration_seconds ? ` Duration: ${data.duration_seconds}s.` : "";
+            setAlert({
+                type: "success",
+                message: `${data.message}.${duration} Safety backup: ${data.safety_backup}.`,
+            });
+            setVerifiedBackup("");
+            await loadBackups();
+        } catch (error) {
+            setAlert({ type: "error", message: error.message });
+        } finally {
+            setRestoring(false);
         }
     };
 
@@ -271,6 +344,71 @@ export default function DatabaseBackupPage() {
                             </div>
                             <p className="text-sm font-bold leading-6 text-amber-900">
                                 Database recovery should only be performed by authorized administrators.
+                            </p>
+                        </section>
+
+                        <section className="rounded-2xl bg-white p-6 shadow-sm">
+                            <div className="mb-4 flex items-center gap-3">
+                                <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#eef6fb] text-[#1e4db7]">
+                                    <RotateCcw size={22} />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-extrabold text-[#07102f]">Restore Database</h2>
+                                    <p className="text-sm font-semibold text-[#6f85a3]">
+                                        Verify a backup before recovery.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <label className="mb-2 block text-xs font-extrabold uppercase text-[#6f85a3]">
+                                Backup File
+                            </label>
+                            <select
+                                value={selectedBackup}
+                                onChange={(event) => {
+                                    setSelectedBackup(event.target.value);
+                                    setVerifiedBackup("");
+                                }}
+                                disabled={loading || restoring || backups.length === 0}
+                                className="mb-4 h-11 w-full rounded-xl border border-blue-100 bg-[#f8fcff] px-3 text-sm font-bold text-[#17325c] outline-none transition focus:border-[#1e4db7] disabled:cursor-not-allowed disabled:bg-slate-100"
+                            >
+                                {backups.length === 0 && <option value="">No backups available</option>}
+                                {backups.map((backup) => (
+                                    <option key={backup.filename} value={backup.filename}>
+                                        {backup.filename}
+                                    </option>
+                                ))}
+                            </select>
+
+                            <div className="grid gap-3">
+                                <button
+                                    onClick={verifyBackup}
+                                    disabled={!selectedBackup || verifying || restoring}
+                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#eef6fb] px-4 text-sm font-extrabold text-[#1e4db7] transition hover:bg-[#d9edf8] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                    {verifying ? <Loader2 size={17} className="animate-spin" /> : <ShieldCheck size={17} />}
+                                    Verify Backup
+                                </button>
+
+                                <button
+                                    onClick={restoreBackup}
+                                    disabled={!selectedBackup || verifiedBackup !== selectedBackup || restoring || verifying}
+                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-extrabold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-200"
+                                >
+                                    {restoring ? <Loader2 size={17} className="animate-spin" /> : <RotateCcw size={17} />}
+                                    Restore Verified Backup
+                                </button>
+                            </div>
+
+                            {verifiedBackup === selectedBackup && (
+                                <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-xs font-extrabold text-emerald-700">
+                                    <ShieldCheck size={14} />
+                                    Backup verified and ready to restore
+                                </div>
+                            )}
+
+                            <p className="mt-4 rounded-xl bg-red-50 px-3 py-3 text-xs font-bold leading-5 text-red-700">
+                                Restore replaces current database data. A pre-restore safety backup is created automatically.
                             </p>
                         </section>
                     </aside>

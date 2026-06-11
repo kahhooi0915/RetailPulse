@@ -639,12 +639,16 @@ def admin_warehouse_transfer_details(transfer_id):
                    td.source_stock_before,
                    td.source_stock_after,
                    td.destination_stock_before,
-                   td.destination_stock_after
+                   td.destination_stock_after,
+                   COALESCE(i.quantity_in_stock, 0) AS current_source_stock
             FROM transfer_detail td
             JOIN product p ON td.product_id = p.product_id
+            LEFT JOIN inventory i
+              ON i.product_id = td.product_id
+             AND i.branch_id = %s
             WHERE td.transfer_id = %s
             ORDER BY td.transfer_detail_id
-        """, (transfer_id,))
+        """, (transfer_row[2], transfer_id))
 
         detail_rows = cur.fetchall()
         details = []
@@ -659,7 +663,8 @@ def admin_warehouse_transfer_details(transfer_id):
                 "source_stock_before": row[5],
                 "source_stock_after": row[6],
                 "destination_stock_before": row[7],
-                "destination_stock_after": row[8]
+                "destination_stock_after": row[8],
+                "current_source_stock": row[9]
             })
 
         _close(conn, cur)

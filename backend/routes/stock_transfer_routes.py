@@ -119,6 +119,71 @@ def _to_int(value):
         return None
 
 
+def _normalize_transfer_items(data):
+    raw_items = data.get("items")
+
+    if raw_items is None:
+        raw_items = data.get("transfer_items")
+
+    if raw_items is None and data.get("product_id") is not None:
+        raw_items = [{
+            "product_id": data.get("product_id"),
+            "quantity": data.get("quantity"),
+        }]
+
+    if not isinstance(raw_items, list) or not raw_items:
+        return None, "At least one transfer item is required"
+
+    items_by_product = {}
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            return None, "Each transfer item must include product_id and quantity"
+
+        product_id = _to_int(item.get("product_id"))
+        quantity = _to_int(item.get("quantity"))
+
+        if product_id is None:
+            return None, "Product is required for every transfer item"
+
+        if quantity is None or quantity <= 0:
+            return None, "Quantity must be greater than 0 for every transfer item"
+
+        items_by_product[product_id] = items_by_product.get(product_id, 0) + quantity
+
+    return [
+        {"product_id": product_id, "quantity": quantity}
+        for product_id, quantity in items_by_product.items()
+    ], None
+
+
+def _validate_transfer_products(cur, items):
+    product_ids = [item["product_id"] for item in items]
+
+    cur.execute("""
+        SELECT p.product_id
+        FROM product p
+        JOIN category c ON p.category_id = c.category_id
+        WHERE p.product_id = ANY(%s)
+          AND p.status = 'ACTIVE'
+          AND c.status = 'ACTIVE'
+    """, (product_ids,))
+
+    found_product_ids = {row[0] for row in cur.fetchall()}
+    missing_product_ids = [
+        product_id for product_id in product_ids
+        if product_id not in found_product_ids
+    ]
+
+    if missing_product_ids:
+        return False, {
+            "message": "One or more products were not found",
+            "product_ids": missing_product_ids,
+        }
+
+    return True, None
+
+
 # =========================
 # STAFF - CREATE REQUEST
 # =========================
@@ -133,9 +198,13 @@ def create_transfer_request():
         from_branch_id = data.get("from_branch_id")
         to_branch_id = data.get("to_branch_id")
         requested_by = data.get("requested_by")
+        items, item_error = _normalize_transfer_items(data)
 
         if not all([from_branch_id, to_branch_id, requested_by]):
             return jsonify({"message": "Missing required fields"}), 400
+
+        if item_error:
+            return jsonify({"message": item_error}), 400
 
         conn = get_connection()
         cur = conn.cursor()
@@ -153,7 +222,14 @@ def create_transfer_request():
         allowed, message = _can_create_request(user, from_branch_id, to_branch_id)
 
         if not allowed:
+            conn.rollback()
             return jsonify({"message": message}), 403
+
+        valid_products, product_error = _validate_transfer_products(cur, items)
+
+        if not valid_products:
+            conn.rollback()
+            return jsonify(product_error), 404
 
         cur.execute("""
             INSERT INTO stock_transfer (
@@ -169,6 +245,13 @@ def create_transfer_request():
         """, (from_branch_id, to_branch_id, requested_by))
 
         new_transfer = cur.fetchone()
+
+        for item in items:
+            cur.execute("""
+                INSERT INTO transfer_detail (transfer_id, product_id, quantity)
+                VALUES (%s, %s, %s)
+            """, (new_transfer[0], item["product_id"], item["quantity"]))
+
         conn.commit()
         log_audit(
             requested_by,
@@ -181,10 +264,13 @@ def create_transfer_request():
         return jsonify({
             "message": "Transfer request created",
             "transfer_id": new_transfer[0],
-            "transfer_code": new_transfer[1]
+            "transfer_code": new_transfer[1],
+            "items_count": len(items)
         }), 201
 
     except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"message": str(e)}), 500
     finally:
         if cur:
@@ -981,7 +1067,11 @@ def get_transfer_items(transfer_id):
                    td.product_id,
                    p.product_code,
                    p.product_name,
-                   td.quantity
+                   td.quantity,
+                   td.source_stock_before,
+                   td.source_stock_after,
+                   td.destination_stock_before,
+                   td.destination_stock_after
             FROM transfer_detail td
             JOIN product p ON td.product_id = p.product_id
             WHERE td.transfer_id = %s
@@ -998,7 +1088,11 @@ def get_transfer_items(transfer_id):
                 "product_id": row[2],
                 "product_code": row[3],
                 "product_name": row[4],
-                "quantity": row[5]
+                "quantity": row[5],
+                "source_stock_before": row[6],
+                "source_stock_after": row[7],
+                "destination_stock_before": row[8],
+                "destination_stock_after": row[9]
             })
 
         cur.close()

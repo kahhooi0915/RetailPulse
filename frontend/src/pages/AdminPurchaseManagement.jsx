@@ -53,6 +53,7 @@ export default function AdminPurchaseManagement() {
     const [selectedPurchase, setSelectedPurchase] = useState(null);
     const [purchaseForm, setPurchaseForm] = useState(emptyPurchase);
     const [prefilledPurchaseKey, setPrefilledPurchaseKey] = useState("");
+    const [focusedProductId, setFocusedProductId] = useState("");
 
     const [toast, setToast] = useState(null);
     const [showNotifications, setShowNotifications] = useState(false);
@@ -118,6 +119,7 @@ export default function AdminPurchaseManagement() {
     }, [purchases, searchTerm]);
 
     const openCreatePurchase = () => {
+        setFocusedProductId("");
         setPurchaseForm({ ...emptyPurchase, items: [createEmptyPurchaseItem()] });
         setShowPurchaseForm(true);
     };
@@ -138,6 +140,50 @@ export default function AdminPurchaseManagement() {
         );
     }, [supplierProducts, purchaseForm.supplier_id]);
 
+    const focusedProductSupplierOffers = useMemo(() => {
+        if (!focusedProductId) return [];
+
+        return supplierProducts
+            .filter((item) => Number(item.product_id) === Number(focusedProductId) && item.status === "ACTIVE")
+            .sort((a, b) => {
+                const priceDiff = Number(a.purchase_price || 0) - Number(b.purchase_price || 0);
+                if (priceDiff !== 0) return priceDiff;
+                if (a.is_preferred !== b.is_preferred) return a.is_preferred ? -1 : 1;
+                return String(a.supplier_name || "").localeCompare(String(b.supplier_name || ""));
+            });
+    }, [supplierProducts, focusedProductId]);
+
+    const lowestFocusedOfferPrice = focusedProductSupplierOffers.length
+        ? Number(focusedProductSupplierOffers[0].purchase_price || 0)
+        : null;
+
+    const supplierSelectOptions = useMemo(() => {
+        if (focusedProductId) {
+            return [
+                { value: "", label: focusedProductSupplierOffers.length ? "Select Supplier" : "No supplier can supply this product" },
+                ...focusedProductSupplierOffers.map((offer) => {
+                    const supplier = suppliers.find((item) => Number(item.supplier_id) === Number(offer.supplier_id));
+                    const supplierCode = supplier?.supplier_code || offer.supplier_code || `SUP-${offer.supplier_id}`;
+                    const supplierName = supplier?.supplier_name || offer.supplier_name;
+                    const isLowest = Number(offer.purchase_price || 0) === lowestFocusedOfferPrice;
+                    const suffix = `${formatCurrency(offer.purchase_price)}${isLowest ? " - lowest offer" : ""}`;
+
+                    return {
+                        value: offer.supplier_id,
+                        label: `${supplierCode} - ${supplierName} (${suffix})`,
+                    };
+                }),
+            ];
+        }
+
+        return [
+            { value: "", label: "Select Supplier" },
+            ...suppliers
+                .filter((s) => s.status === "ACTIVE")
+                .map((s) => ({ value: s.supplier_id, label: `${s.supplier_code} - ${s.supplier_name}` })),
+        ];
+    }, [focusedProductId, focusedProductSupplierOffers, lowestFocusedOfferPrice, suppliers]);
+
     const selectedSupplier = useMemo(() => {
         return suppliers.find((supplier) => Number(supplier.supplier_id) === Number(purchaseForm.supplier_id));
     }, [suppliers, purchaseForm.supplier_id]);
@@ -153,8 +199,9 @@ export default function AdminPurchaseManagement() {
         const supplierProduct = supplierProducts
             .filter((item) => Number(item.product_id) === productId && item.status === "ACTIVE")
             .sort((a, b) => {
-                if (a.is_preferred !== b.is_preferred) return a.is_preferred ? -1 : 1;
-                return Number(a.purchase_price || 0) - Number(b.purchase_price || 0);
+                const priceDiff = Number(a.purchase_price || 0) - Number(b.purchase_price || 0);
+                if (priceDiff !== 0) return priceDiff;
+                return a.is_preferred === b.is_preferred ? 0 : a.is_preferred ? -1 : 1;
             })[0];
 
         if (!supplierProduct) {
@@ -176,10 +223,37 @@ export default function AdminPurchaseManagement() {
                 lead_time_days: supplierProduct.lead_time_days ?? "",
             }],
         });
+        setFocusedProductId(String(productId));
         setShowPurchaseForm(true);
         setPrefilledPurchaseKey(requestKey);
         setSearchParams({}, { replace: true });
     }, [searchParams, supplierProducts, branches, prefilledPurchaseKey, setSearchParams]);
+
+    const updatePurchaseSupplier = (supplierId) => {
+        const selectedSupplierProduct = focusedProductId
+            ? supplierProducts.find(
+                (item) =>
+                    Number(item.supplier_id) === Number(supplierId) &&
+                    Number(item.product_id) === Number(focusedProductId) &&
+                    item.status === "ACTIVE"
+            )
+            : null;
+
+        setPurchaseForm({
+            ...purchaseForm,
+            supplier_id: supplierId,
+            receiving_branch_id: purchaseForm.receiving_branch_id,
+            items: focusedProductId
+                ? [{
+                    ...createEmptyPurchaseItem(),
+                    product_id: String(focusedProductId),
+                    quantity: purchaseForm.items[0]?.quantity || "",
+                    purchase_price: selectedSupplierProduct ? String(selectedSupplierProduct.purchase_price) : "",
+                    lead_time_days: selectedSupplierProduct?.lead_time_days ?? "",
+                }]
+                : [createEmptyPurchaseItem()],
+        });
+    };
 
     const selectedProductIds = useMemo(() => {
         return purchaseForm.items
@@ -588,21 +662,33 @@ export default function AdminPurchaseManagement() {
                         <FormSelect
                             label="Supplier"
                             value={purchaseForm.supplier_id}
-                            onChange={(value) =>
-                                setPurchaseForm({
-                                    ...purchaseForm,
-                                    supplier_id: value,
-                                    receiving_branch_id: purchaseForm.receiving_branch_id,
-                                    items: [createEmptyPurchaseItem()],
-                                })
-                            }
-                            options={[
-                                { value: "", label: "Select Supplier" },
-                                ...suppliers
-                                    .filter((s) => s.status === "ACTIVE")
-                                    .map((s) => ({ value: s.supplier_id, label: `${s.supplier_code} - ${s.supplier_name}` })),
-                            ]}
+                            onChange={updatePurchaseSupplier}
+                            options={supplierSelectOptions}
                         />
+
+                        {focusedProductSupplierOffers.length > 0 && (
+                            <div className="rounded-2xl bg-[#f8fcff] p-4">
+                                <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">Supplier Offers For Selected Product</p>
+                                <div className="mt-3 space-y-2">
+                                    {focusedProductSupplierOffers.slice(0, 3).map((offer) => (
+                                        <div key={`${offer.supplier_id}-${offer.product_id}`} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2">
+                                            <div>
+                                                <p className="font-extrabold text-[#17325c]">{offer.supplier_name}</p>
+                                                <p className="text-xs font-bold text-[#6f85a3]">
+                                                    {offer.product_name} | {offer.lead_time_days || "-"} day lead time
+                                                </p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="font-extrabold text-[#0c2f73]">{formatCurrency(offer.purchase_price)}</p>
+                                                {Number(offer.purchase_price || 0) === lowestFocusedOfferPrice && (
+                                                    <p className="text-xs font-extrabold uppercase text-green-600">Lowest Offer</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {selectedSupplier && <SupplierContactSummary supplier={selectedSupplier} />}
 
@@ -659,11 +745,17 @@ export default function AdminPurchaseManagement() {
                                                         <select
                                                             value={item.product_id}
                                                             onChange={(e) => updatePurchaseItem(item.row_id, "product_id", e.target.value)}
+                                                            disabled={Boolean(focusedProductId)}
                                                             className="w-full rounded-2xl bg-[#eef6fb] px-3 py-2 font-semibold text-[#17325c] outline-none"
                                                         >
                                                             <option value="">
                                                                 {purchaseForm.supplier_id ? "Select Product" : "Select Supplier First"}
                                                             </option>
+                                                            {focusedProductId && item.product_id && !supplierProductOptions.some((option) => Number(option.product_id) === Number(item.product_id)) && (
+                                                                <option value={item.product_id}>
+                                                                    {focusedProductSupplierOffers[0]?.product_name || "Selected Product"}
+                                                                </option>
+                                                            )}
                                                             {supplierProductOptions
                                                                 .filter((option) =>
                                                                     !selectedProductIds.includes(Number(option.product_id)) ||

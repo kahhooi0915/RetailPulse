@@ -5,8 +5,10 @@ import {
   ArrowLeftRight,
   BarChart3,
   Building2,
+  CircleDollarSign,
   FileDown,
   FolderKanban,
+  HelpCircle,
   Package,
   Printer,
   ShoppingCart,
@@ -35,6 +37,15 @@ import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
+const getDashboardPeriodQuery = (view) => {
+  const period = String(view || "Monthly").toLowerCase();
+  if (period.includes("year")) return "period=yearly";
+  return "period=monthly";
+};
+
+const GROSS_PROFIT_TOOLTIP =
+  "Gross Profit represents the estimated profit generated from product sales before operating expenses. It is calculated using the difference between selling price and purchase cost multiplied by quantity sold.";
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
 
@@ -47,6 +58,9 @@ export default function AdminDashboard() {
   const [sales, setSales] = useState([]);
   const [dashboardSummary, setDashboardSummary] = useState({
     pending_transfers: 0,
+    total_sales: 0,
+    gross_profit: 0,
+    inventory_value: 0,
   });
   const [recentActivity, setRecentActivity] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +120,7 @@ export default function AdminDashboard() {
         fetch(`${API_BASE}/admin/categories`),
         fetch(`${API_BASE}/admin/inventory`),
         fetch(`${API_BASE}/admin/sales`),
-        fetch(`${API_BASE}/admin/dashboard/summary`),
+        fetch(`${API_BASE}/admin/dashboard/summary?${getDashboardPeriodQuery(settingsData.dashboardView)}`),
         fetch(`${API_BASE}/admin/audit-logs?user_id=${user.user_id}&limit=5`),
       ]);
 
@@ -125,7 +139,12 @@ export default function AdminDashboard() {
       setCategories(Array.isArray(categoriesData) ? categoriesData : []);
       setInventory(Array.isArray(inventoryData) ? inventoryData : []);
       setSales(Array.isArray(salesData) ? salesData : []);
-      setDashboardSummary(dashboardSummaryData || { pending_transfers: 0 });
+      setDashboardSummary(dashboardSummaryData || {
+        pending_transfers: 0,
+        total_sales: 0,
+        gross_profit: 0,
+        inventory_value: 0,
+      });
       setRecentActivity(Array.isArray(recentActivityData) ? recentActivityData : []);
     } catch (error) {
       console.error(error);
@@ -168,10 +187,9 @@ export default function AdminDashboard() {
     }
   };
 
-  const totalSales = sales.reduce(
-    (sum, sale) => sum + Number(sale.total_amount || 0),
-    0
-  );
+  const totalSales = Number(dashboardSummary.total_sales || 0);
+  const grossProfit = Number(dashboardSummary.gross_profit || 0);
+  const inventoryValue = Number(dashboardSummary.inventory_value || 0);
 
   const lowStockItems = useMemo(() => {
     return inventory.filter((item) => {
@@ -311,6 +329,7 @@ export default function AdminDashboard() {
               left: 0 !important;
               top: 0 !important;
               width: 100% !important;
+              box-sizing: border-box !important;
               background: #eef6fb !important;
               color: #07102f !important;
               padding: 18px !important;
@@ -345,6 +364,34 @@ export default function AdminDashboard() {
 
             #admin-dashboard-report-content .rounded-2xl {
               border-radius: 16px !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-chart-card,
+            #admin-dashboard-report-content .admin-dashboard-chart {
+              max-width: 100% !important;
+              overflow: hidden !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-screen-chart {
+              display: none !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-print-chart {
+              display: block !important;
+            }
+
+            #admin-dashboard-report-content .admin-dashboard-print-chart.hidden {
+              display: block !important;
+            }
+
+            #admin-dashboard-report-content .recharts-responsive-container,
+            #admin-dashboard-report-content .recharts-wrapper,
+            #admin-dashboard-report-content .recharts-surface {
+              max-width: 100% !important;
+            }
+
+            #admin-dashboard-report-content .recharts-surface {
+              overflow: hidden !important;
             }
 
             #admin-dashboard-report-content .bg-white {
@@ -462,8 +509,16 @@ export default function AdminDashboard() {
               <SummaryCard title="Categories" value={categories.length} icon={FolderKanban} color="text-[#07102f]" />
             </section>
 
-            <section className="admin-dashboard-summary-grid grid grid-cols-2 gap-5 xl:grid-cols-4">
+            <section className="admin-dashboard-summary-grid grid grid-cols-2 gap-5 xl:grid-cols-3 2xl:grid-cols-6">
               <SummaryCard title="Total Sales" value={formatCurrency(totalSales)} icon={TrendingUp} color="text-green-600" />
+              <SummaryCard
+                title="Gross Profit"
+                value={formatCurrency(grossProfit)}
+                icon={CircleDollarSign}
+                color="text-green-600"
+                tooltipText={GROSS_PROFIT_TOOLTIP}
+              />
+              <SummaryCard title="Inventory Value" value={formatCurrency(inventoryValue)} icon={Package} color="text-[#1e4db7]" />
               <SummaryCard title="Sales Records" value={sales.length} icon={ShoppingCart} color="text-[#1e4db7]" />
               <SummaryCard
                 title="Pending Transfers"
@@ -476,7 +531,7 @@ export default function AdminDashboard() {
             </section>
 
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-extrabold text-[#07102f]">
                   Top Performing Sales Branches
                 </h2>
@@ -509,7 +564,7 @@ export default function AdminDashboard() {
             </section>
 
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-extrabold text-[#07102f]">
                   Top 5 Sales Distribution by Branch
                 </h2>
@@ -517,37 +572,46 @@ export default function AdminDashboard() {
                   Visual breakdown of total sales revenue for the top five performing branches.
                 </p>
 
-                <div className="mt-6 h-[300px]">
+                <div className="admin-dashboard-chart mt-6">
                   {branchSalesPieData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={branchSalesPieData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={90}
-                          label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
-                        >
-                          {branchSalesPieData.map((entry, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={pieColors[index % pieColors.length]}
-                            />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value) => formatCurrency(value)} />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    <>
+                      <div className="admin-dashboard-screen-chart h-[300px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={branchSalesPieData}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={90}
+                              label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                            >
+                              {branchSalesPieData.map((entry, index) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={pieColors[index % pieColors.length]}
+                                />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(value) => formatCurrency(value)} />
+                            <Legend />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <PrintDistributionChart
+                        data={branchSalesPieData}
+                        colors={pieColors}
+                        formatValue={formatCurrency}
+                      />
+                    </>
                   ) : (
                     <EmptyBox text="No branch sales data available for chart." />
                   )}
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-extrabold text-[#07102f]">
                   Inventory Status Overview
                 </h2>
@@ -555,39 +619,51 @@ export default function AdminDashboard() {
                   Comparison between low stock and normal stock items.
                 </p>
 
-                <div className="mt-6 h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={[
-                          { name: "Low Stock", value: lowStockItems.length },
-                          {
-                            name: "Normal Stock",
-                            value: Math.max(inventory.length - lowStockItems.length, 0),
-                          },
-                        ]}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={90}
-                        label={({ name, percent }) =>
-                          `${name}: ${(percent * 100).toFixed(0)}%`
-                        }
-                      >
-                        <Cell fill="#ef4444" />
-                        <Cell fill="#1e4db7" />
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
+                <div className="admin-dashboard-chart mt-6">
+                  <div className="admin-dashboard-screen-chart h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: "Low Stock", value: lowStockItems.length },
+                            {
+                              name: "Normal Stock",
+                              value: Math.max(inventory.length - lowStockItems.length, 0),
+                            },
+                          ]}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={90}
+                          label={({ name, percent }) =>
+                            `${name}: ${(percent * 100).toFixed(0)}%`
+                          }
+                        >
+                          <Cell fill="#ef4444" />
+                          <Cell fill="#1e4db7" />
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <PrintDistributionChart
+                    data={[
+                      { name: "Low Stock", value: lowStockItems.length },
+                      {
+                        name: "Normal Stock",
+                        value: Math.max(inventory.length - lowStockItems.length, 0),
+                      },
+                    ]}
+                    colors={["#ef4444", "#1e4db7"]}
+                  />
                 </div>
               </div>
             </section>
 
             <section>
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-extrabold text-[#07102f]">
                   Lowest Performing Sales Branches
                 </h2>
@@ -851,13 +927,29 @@ function DashboardActionButton({
   );
 }
 
-function SummaryCard({ title, value, icon: Icon, color, helperText }) {
+function SummaryCard({ title, value, icon: Icon, color, helperText, tooltipText }) {
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm">
       <div className="flex items-center justify-between">
-        <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
-          {title}
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+            {title}
+          </p>
+          {tooltipText && (
+            <span className="group relative inline-flex">
+              <button
+                type="button"
+                className="grid h-5 w-5 place-items-center rounded-full text-[#6f85a3] transition hover:bg-[#eef6fb] hover:text-[#1e4db7]"
+                aria-label={tooltipText}
+              >
+                <HelpCircle size={14} />
+              </button>
+              <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-lg border border-blue-100 bg-white p-3 text-left text-xs font-semibold normal-case tracking-normal text-[#17325c] shadow-xl group-hover:block">
+                {tooltipText}
+              </span>
+            </span>
+          )}
+        </div>
 
         <div className="grid h-10 w-10 place-items-center rounded-full bg-[#eef6fb]">
           <Icon size={18} className={color} />
@@ -901,46 +993,79 @@ function BranchRevenueBarChart({ branches, formatCurrency, barColor }) {
     return <EmptyBox text="No sales data available." />;
   }
 
+  const maxRevenue = Math.max(
+    ...branches.map((branch) => Number(branch.revenue || 0)),
+    1
+  );
+
   return (
-    <div className="mt-6 h-[320px]">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart
-          data={branches}
-          layout="vertical"
-          margin={{ top: 8, right: 28, left: 18, bottom: 8 }}
-        >
-          <CartesianGrid stroke="#eef6fb" horizontal={false} />
-          <XAxis
-            type="number"
-            tickFormatter={(value) => formatCurrency(value)}
-            tick={{ fill: "#6f85a3", fontSize: 12, fontWeight: 700 }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            type="category"
-            dataKey="branch_name"
-            width={170}
-            tick={{ fill: "#17325c", fontSize: 12, fontWeight: 800 }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            cursor={{ fill: "#f8fcff" }}
-            content={<BranchRevenueTooltip formatCurrency={formatCurrency} />}
-          />
-          <Bar dataKey="revenue" fill={barColor} radius={[0, 8, 8, 0]} barSize={24}>
-            <LabelList
-              dataKey="revenue"
-              position="right"
-              formatter={(value) => formatCurrency(value)}
-              fill="#17325c"
-              fontSize={12}
-              fontWeight={800}
+    <div className="admin-dashboard-chart mt-6">
+      <div className="admin-dashboard-screen-chart h-[320px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={branches}
+            layout="vertical"
+            margin={{ top: 8, right: 28, left: 18, bottom: 8 }}
+          >
+            <CartesianGrid stroke="#eef6fb" horizontal={false} />
+            <XAxis
+              type="number"
+              tickFormatter={(value) => formatCurrency(value)}
+              tick={{ fill: "#6f85a3", fontSize: 12, fontWeight: 700 }}
+              axisLine={false}
+              tickLine={false}
             />
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+            <YAxis
+              type="category"
+              dataKey="branch_name"
+              width={170}
+              tick={{ fill: "#17325c", fontSize: 12, fontWeight: 800 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              cursor={{ fill: "#f8fcff" }}
+              content={<BranchRevenueTooltip formatCurrency={formatCurrency} />}
+            />
+            <Bar dataKey="revenue" fill={barColor} radius={[0, 8, 8, 0]} barSize={24}>
+              <LabelList
+                dataKey="revenue"
+                position="right"
+                formatter={(value) => formatCurrency(value)}
+                fill="#17325c"
+                fontSize={12}
+                fontWeight={800}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="admin-dashboard-print-chart hidden space-y-4">
+        {branches.map((branch) => {
+          const revenue = Number(branch.revenue || 0);
+          const width = `${Math.max((revenue / maxRevenue) * 100, 2)}%`;
+
+          return (
+            <div key={branch.branch_id}>
+              <div className="mb-2 flex items-center justify-between gap-4 text-xs">
+                <span className="max-w-[55%] font-extrabold text-[#17325c]">
+                  {branch.branch_name}
+                </span>
+                <span className="font-bold text-[#6f85a3]">
+                  {formatCurrency(revenue)}
+                </span>
+              </div>
+              <div className="h-5 overflow-hidden rounded-full bg-[#eef6fb]">
+                <div
+                  className="h-full rounded-full"
+                  style={{ width, backgroundColor: barColor }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -959,6 +1084,59 @@ function BranchRevenueTooltip({ active, payload, formatCurrency }) {
       <p className="mt-3 font-extrabold text-[#1e4db7]">
         {formatCurrency(branch.revenue)}
       </p>
+    </div>
+  );
+}
+
+function PrintDistributionChart({ data, colors, formatValue = (value) => value }) {
+  const total = data.reduce((sum, item) => sum + Number(item.value || 0), 0);
+
+  return (
+    <div className="admin-dashboard-print-chart hidden">
+      <div className="mb-5 flex h-8 overflow-hidden rounded-full bg-[#eef6fb]">
+        {data.map((item, index) => {
+          const value = Number(item.value || 0);
+          const width = total > 0 ? `${(value / total) * 100}%` : "0%";
+
+          return (
+            <div
+              key={item.name}
+              className="h-full"
+              style={{
+                width,
+                backgroundColor: colors[index % colors.length],
+              }}
+            />
+          );
+        })}
+      </div>
+
+      <div className="space-y-3">
+        {data.map((item, index) => {
+          const value = Number(item.value || 0);
+          const percent = total > 0 ? (value / total) * 100 : 0;
+
+          return (
+            <div
+              key={item.name}
+              className="flex items-center justify-between gap-4 rounded-xl bg-[#f8fcff] px-4 py-3 text-sm"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="h-3 w-3 shrink-0 rounded-full"
+                  style={{ backgroundColor: colors[index % colors.length] }}
+                />
+                <span className="truncate font-extrabold text-[#17325c]">
+                  {item.name}
+                </span>
+              </div>
+              <span className="shrink-0 font-bold text-[#6f85a3]">
+                {formatValue(value)} ({percent.toFixed(0)}%)
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

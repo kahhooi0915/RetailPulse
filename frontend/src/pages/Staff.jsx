@@ -6,6 +6,7 @@ import {
   Settings,
   ShoppingCart,
   BarChart3,
+  History,
   User,
   LogOut,
   Plus,
@@ -90,6 +91,10 @@ export default function Staff() {
   const [discountInput, setDiscountInput] = useState("");
   const [showHoldList, setShowHoldList] = useState(false);
   const [heldOrders, setHeldOrders] = useState([]);
+  const [showSalesHistory, setShowSalesHistory] = useState(false);
+  const [salesHistory, setSalesHistory] = useState([]);
+  const [salesHistorySearch, setSalesHistorySearch] = useState("");
+  const [loadingSalesHistory, setLoadingSalesHistory] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -319,6 +324,21 @@ export default function Staff() {
   const tax = discountedSubtotal * (taxRate / 100);
   const total = discountedSubtotal + tax;
 
+  const filteredSalesHistory = useMemo(() => {
+    const keyword = salesHistorySearch.trim().toLowerCase();
+
+    if (!keyword) return salesHistory;
+
+    return salesHistory.filter((sale) => {
+      return (
+        sale.sale_code?.toLowerCase().includes(keyword) ||
+        sale.user_name?.toLowerCase().includes(keyword) ||
+        sale.payment_method?.toLowerCase().includes(keyword) ||
+        String(sale.sale_id || "").includes(keyword)
+      );
+    });
+  }, [salesHistory, salesHistorySearch]);
+
   const logout = () => {
     sessionStorage.removeItem("user");
     sessionStorage.removeItem("user");
@@ -392,6 +412,91 @@ export default function Staff() {
     setHeldOrders(updatedOrders);
     };
 
+  const fetchSalesHistory = async (savedUser = user) => {
+    if (!savedUser?.branch_id) return;
+
+    try {
+      setLoadingSalesHistory(true);
+
+      const res = await fetch(`${API_BASE}/admin/sales`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.message || "Failed to load sales history.");
+        return;
+      }
+
+      const branchSales = Array.isArray(data)
+        ? data
+            .filter((sale) => Number(sale.branch_id) === Number(savedUser.branch_id))
+            .sort((a, b) => new Date(b.sale_date || 0) - new Date(a.sale_date || 0))
+        : [];
+
+      setSalesHistory(branchSales);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load sales history. Check backend connection.");
+    } finally {
+      setLoadingSalesHistory(false);
+    }
+  };
+
+  const openSalesHistory = () => {
+    setShowSalesHistory(true);
+    fetchSalesHistory();
+  };
+
+  const reprintSaleReceipt = async (sale) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/sales/${sale.sale_id}/details`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.message || "Failed to load sale details.");
+        return;
+      }
+
+      const receiptItems = Array.isArray(data.details) ? data.details : [];
+      const receiptSubtotal = receiptItems.reduce(
+        (sum, item) => sum + Number(item.subtotal || 0),
+        0
+      );
+      const receiptTotal = Number(sale.total_amount || receiptSubtotal);
+      const receiptDiscount = Math.max(receiptSubtotal - receiptTotal, 0);
+      const receiptTax = Math.max(receiptTotal - receiptSubtotal, 0);
+
+      setCompletedSale({
+        sale_id: sale.sale_id,
+        sale_code: sale.sale_code || `RP-${sale.sale_id}`,
+        payment_method: sale.payment_method || "N/A",
+        cashier_name: sale.user_name || user?.name || "Cashier",
+        branch_name: sale.branch_name || user?.branch_name || "Branch",
+        cart: receiptItems.map((item) => ({
+          product_id: item.product_id,
+          product_code: item.product_code,
+          product_name: item.product_name,
+          quantity: Number(item.quantity || 0),
+          selling_price: Number(item.unit_price || 0),
+          subtotal: Number(item.subtotal || 0),
+        })),
+        subtotal: receiptSubtotal,
+        discountPercent: 0,
+        discountAmount: receiptDiscount,
+        tax: receiptTax,
+        taxRate: null,
+        total: receiptTotal,
+        date: sale.sale_date ? new Date(sale.sale_date) : new Date(),
+        isReprint: true,
+      });
+
+      setShowSalesHistory(false);
+      setPaymentSuccess(true);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to reprint receipt. Check backend connection.");
+    }
+  };
+
   const completeTransaction = () => {
   if (cart.length === 0) {
     alert("Cart is empty.");
@@ -445,17 +550,41 @@ export default function Staff() {
         }
       }
 
+      const updateSaleRes = await fetch(`${API_BASE}/admin/sales/${saleData.sale_id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: user.user_id,
+          branch_id: user.branch_id,
+          total_amount: total,
+          payment_method: paymentMethod,
+        }),
+      });
+
+      const updateSaleData = await updateSaleRes.json();
+
+      if (!updateSaleRes.ok) {
+        alert(updateSaleData.message || "Failed to update sale total.");
+        return;
+      }
+
       setCompletedSale({
         sale_id: saleData.sale_id,
         sale_code: saleData.sale_code || `RP-${saleData.sale_id}`,
         payment_method: paymentMethod,
+        cashier_name: user?.name || "Cashier",
+        branch_name: user?.branch_name || "Branch",
         cart,
         subtotal,
         discountPercent,
         discountAmount,
         tax,
+        taxRate,
         total,
         date: new Date(),
+        isReprint: false,
       });
 
       setShowPaymentModal(false);
@@ -561,6 +690,15 @@ export default function Staff() {
             >
               <BarChart3 size={18} />
               {!!sidebarOpen && <span>Analytics</span>}
+            </button>
+
+            <button
+              onClick={openSalesHistory}
+              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 font-semibold text-[#254e7a] transition-all duration-300 hover:-translate-y-1 hover:bg-white/70 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
+            >
+              <History size={18} />
+              {!!sidebarOpen && <span>Sales History</span>}
             </button>
           </nav>
 
@@ -1187,6 +1325,105 @@ export default function Staff() {
             </div>
         )}
 
+    {showSalesHistory && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+        <div className="flex max-h-[86vh] w-[720px] flex-col rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-extrabold text-[#07102f]">
+                Sales History
+              </h2>
+              <p className="mt-1 text-sm font-semibold text-[#6f85a3]">
+                {user?.branch_name || "Branch"}
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowSalesHistory(false)}
+              className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="mb-5 flex items-center gap-3 rounded-2xl bg-[#eef6fb] px-4 py-3">
+            <Search size={18} className="text-[#0c2f73]" />
+            <input
+              value={salesHistorySearch}
+              onChange={(event) => setSalesHistorySearch(event.target.value)}
+              placeholder="Search receipt, cashier, or payment..."
+              className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-[#8aa0b7]"
+            />
+          </div>
+
+          <div className="min-h-[260px] flex-1 overflow-y-auto pr-1">
+            {loadingSalesHistory ? (
+              <div className="grid min-h-[240px] place-items-center text-center text-[#8ba3bc]">
+                <div>
+                  <ReceiptText size={38} className="mx-auto mb-3" />
+                  <p>Loading sales history...</p>
+                </div>
+              </div>
+            ) : filteredSalesHistory.length === 0 ? (
+              <div className="grid min-h-[240px] place-items-center text-center text-[#8ba3bc]">
+                <div>
+                  <ReceiptText size={38} className="mx-auto mb-3" />
+                  <p>No sales records found.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredSalesHistory.map((sale) => {
+                  const saleDate = sale.sale_date ? new Date(sale.sale_date) : null;
+
+                  return (
+                    <div
+                      key={sale.sale_id}
+                      className="grid grid-cols-[1fr_auto] gap-4 rounded-2xl border border-[#e4eef7] bg-[#f8fbfe] p-4"
+                    >
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-extrabold text-[#07102f]">
+                            #{sale.sale_code || `RP-${sale.sale_id}`}
+                          </h3>
+                          <span className="rounded-full bg-[#dff3fb] px-3 py-1 text-xs font-extrabold text-[#0c2f73]">
+                            {sale.payment_method || "N/A"}
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-sm font-semibold text-[#526b86]">
+                          {sale.user_name || "Cashier"} •{" "}
+                          {saleDate
+                            ? `${saleDate.toLocaleDateString()} ${saleDate.toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}`
+                            : "Date unavailable"}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col items-end justify-between gap-3">
+                        <strong className="text-lg text-orange-600">
+                          {formatCurrency(sale.total_amount)}
+                        </strong>
+                        <button
+                          onClick={() => reprintSaleReceipt(sale)}
+                          className="flex items-center gap-2 rounded-full bg-[#0c2f73] px-4 py-2 text-sm font-extrabold text-white hover:bg-[#103986]"
+                        >
+                          <Printer size={15} />
+                          Reprint
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+
     {showSettings && (
       <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
         <div className="w-[460px] rounded-3xl bg-white p-7 shadow-2xl">
@@ -1417,7 +1654,7 @@ export default function Staff() {
           <div className="mb-6 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-extrabold text-[#07102f]">
-                Transaction Complete
+                {completedSale.isReprint ? "Receipt Reprint" : "Transaction Complete"}
               </h1>
               <p className="text-sm text-[#4e6077]">
                 Sale ID: #{completedSale.sale_code} •{" "}
@@ -1426,21 +1663,23 @@ export default function Staff() {
             </div>
 
             <span className="rounded-md bg-[#dff3fb] px-4 py-2 text-xs font-extrabold tracking-widest text-[#07102f]">
-              CONFIRMED
+              {completedSale.isReprint ? "REPRINT" : "CONFIRMED"}
             </span>
           </div>
 
           {/* RECEIPT PREVIEW */}
-          <div id="receipt-pdf" className="mx-auto bg-white p-10 shadow-xl">
+          <div id="receipt-pdf" className="receipt-print-surface mx-auto bg-white p-10 shadow-xl">
             <div className="mb-6 text-center">
               <h2 className="text-2xl font-extrabold text-[#07102f]">
                 RetailPulse
               </h2>
-              <p className="mt-2 font-bold">{user?.branch_name || "Branch"}</p>
+              <p className="mt-2 font-bold">
+                {completedSale.branch_name || user?.branch_name || "Branch"}
+              </p>
               <p className="text-sm text-[#4e6077]">RetailPulse POS System</p>
             </div>
 
-            <div className="mb-7 grid grid-cols-2 gap-4 rounded-2xl bg-[#f3f9fd] p-6 text-sm">
+            <div className="receipt-print-meta mb-7 grid grid-cols-2 gap-4 rounded-2xl bg-[#f3f9fd] p-6 text-sm">
               <div>
                 <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
                   DATE & TIME
@@ -1465,7 +1704,7 @@ export default function Staff() {
                 <p className="text-xs font-bold tracking-widest text-[#8b95a1]">
                   CASHIER
                 </p>
-                <strong>{user?.name || "Staff"}</strong>
+                <strong>{completedSale.cashier_name || user?.name || "Staff"}</strong>
               </div>
 
               <div className="text-right">
@@ -1476,7 +1715,7 @@ export default function Staff() {
               </div>
             </div>
 
-            <div className="mb-5 grid grid-cols-[1fr_80px_120px] text-xs font-extrabold tracking-widest text-[#8b95a1]">
+            <div className="receipt-print-items-head mb-5 grid grid-cols-[1fr_80px_120px] text-xs font-extrabold tracking-widest text-[#8b95a1]">
               <span>ITEM DESCRIPTION</span>
               <span className="text-center">QTY</span>
               <span className="text-right">TOTAL</span>
@@ -1485,7 +1724,7 @@ export default function Staff() {
             {completedSale.cart.map((item) => (
               <div
                 key={item.product_id}
-                className="mb-4 grid grid-cols-[1fr_80px_120px] items-start text-sm"
+                className="receipt-print-item mb-4 grid grid-cols-[1fr_80px_120px] items-start text-sm"
               >
                 <div>
                   <strong>{item.product_name}</strong>
@@ -1502,9 +1741,9 @@ export default function Staff() {
               </div>
             ))}
 
-            <div className="my-6 border-t border-dashed"></div>
+            <div className="receipt-print-divider my-6 border-t border-dashed"></div>
 
-            <div className="space-y-3 text-sm">
+            <div className="receipt-print-totals space-y-3 text-sm">
               <div className="flex justify-between">
                 <span>Subtotal</span>
                 <strong>{formatCurrency(completedSale.subtotal)}</strong>
@@ -1516,17 +1755,19 @@ export default function Staff() {
               </div>
 
               <div className="flex justify-between">
-                <span>Tax ({taxRate}%)</span>
+                <span>
+                  Tax {completedSale.taxRate !== null && completedSale.taxRate !== undefined ? `(${completedSale.taxRate}%)` : ""}
+                </span>
                 <strong>{formatCurrency(completedSale.tax)}</strong>
               </div>
 
-              <div className="flex justify-between rounded-md bg-[#071b52] px-5 py-4 text-xl font-extrabold text-white">
+              <div className="receipt-print-grand-total flex justify-between rounded-md bg-[#071b52] px-5 py-4 text-xl font-extrabold text-white">
                 <span>Grand Total</span>
                 <strong>{formatCurrency(completedSale.total)}</strong>
               </div>
             </div>
 
-            <div className="mt-7 flex items-center justify-between border-b pb-5">
+            <div className="receipt-print-payment mt-7 flex items-center justify-between border-b pb-5">
               <div className="flex items-center gap-3">
                 <CreditCard size={22} />
                 <div>

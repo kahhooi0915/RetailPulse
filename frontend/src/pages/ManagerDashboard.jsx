@@ -1,17 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     BarChart3,
     Bell,
     Boxes,
-    Building2,
-    Package,
     RefreshCcw,
     Settings,
     ShoppingCart,
     TrendingUp,
-    Users,
     AlertTriangle,
+    FileSpreadsheet,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ManagerSidebar from "../components/ManagerSidebar";
@@ -19,12 +17,21 @@ import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
 
+function getSavedUser() {
+    try {
+        return JSON.parse(sessionStorage.getItem("user"));
+    } catch {
+        return null;
+    }
+}
+
 export default function ManagerDashboard() {
     const navigate = useNavigate();
 
-    const [user, setUser] = useState(null);
+    const [user] = useState(() => getSavedUser());
     const [inventory, setInventory] = useState([]);
     const [sales, setSales] = useState([]);
+    const [saleDetails, setSaleDetails] = useState([]);
     const [branches, setBranches] = useState([]);
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -43,38 +50,27 @@ export default function ManagerDashboard() {
         dashboardView: "Weekly",
     });
 
-    useEffect(() => {
-        const savedUser =
-            JSON.parse(sessionStorage.getItem("user")) ||
-            JSON.parse(sessionStorage.getItem("user"));
-
-        if (!savedUser) {
-            navigate("/");
-            return;
-        }
-
-        setUser(savedUser);
-        fetchData();
-    }, [navigate]);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         try {
             setLoading(true);
 
-            const [inventoryRes, salesRes, branchRes, productRes] = await Promise.all([
+            const [inventoryRes, salesRes, saleDetailRes, branchRes, productRes] = await Promise.all([
                 fetch(`${API_BASE}/admin/inventory`),
                 fetch(`${API_BASE}/admin/sales`),
+                fetch(`${API_BASE}/admin/sale-details`),
                 fetch(`${API_BASE}/admin/branches`),
                 fetch(`${API_BASE}/admin/products`),
             ]);
 
             const inventoryData = await inventoryRes.json();
             const salesData = await salesRes.json();
+            const saleDetailData = await saleDetailRes.json();
             const branchData = await branchRes.json();
             const productData = await productRes.json();
 
             setInventory(Array.isArray(inventoryData) ? inventoryData : []);
             setSales(Array.isArray(salesData) ? salesData : []);
+            setSaleDetails(Array.isArray(saleDetailData) ? saleDetailData : []);
             setBranches(Array.isArray(branchData) ? branchData : []);
             setProducts(Array.isArray(productData) ? productData : []);
         } catch (error) {
@@ -83,7 +79,20 @@ export default function ManagerDashboard() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        if (!user) {
+            navigate("/");
+            return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            fetchData();
+        }, 0);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [fetchData, navigate, user]);
 
     const logout = () => {
         sessionStorage.removeItem("user");
@@ -102,6 +111,16 @@ export default function ManagerDashboard() {
         if (!user?.branch_id) return sales;
         return sales.filter((sale) => Number(sale.branch_id) === Number(user.branch_id));
     }, [sales, user]);
+
+    const managerBranchSaleDetails = useMemo(() => {
+        const managerSaleIds = new Set(
+            managerBranchSales.map((sale) => Number(sale.sale_id))
+        );
+
+        return saleDetails.filter((detail) =>
+            managerSaleIds.has(Number(detail.sale_id))
+        );
+    }, [managerBranchSales, saleDetails]);
 
     const totalStock = managerBranchInventory.reduce(
         (sum, item) => sum + Number(item.quantity_in_stock || 0),
@@ -130,8 +149,34 @@ export default function ManagerDashboard() {
             .slice(0, 5);
     }, [managerBranchInventory]);
 
+    const topSellingProducts = useMemo(() => {
+        const totals = managerBranchSaleDetails.reduce((map, detail) => {
+            const productId = Number(detail.product_id);
+            const current = map.get(productId) || {
+                product_id: productId,
+                product_code: detail.product_code,
+                product_name: detail.product_name,
+                quantity: 0,
+                revenue: 0,
+            };
+
+            current.quantity += Number(detail.quantity || 0);
+            current.revenue += Number(detail.subtotal || 0);
+            map.set(productId, current);
+            return map;
+        }, new Map());
+
+        return [...totals.values()]
+            .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+            .slice(0, 10);
+    }, [managerBranchSaleDetails]);
+
+    const retailBranches = useMemo(() => {
+        return branches.filter((branch) => branch.branch_type !== "WAREHOUSE");
+    }, [branches]);
+
     const branchPerformance = useMemo(() => {
-        return branches.map((branch) => {
+        return retailBranches.map((branch) => {
             const branchSales = sales.filter(
                 (sale) => Number(sale.branch_id) === Number(branch.branch_id)
             );
@@ -153,7 +198,37 @@ export default function ManagerDashboard() {
                 ),
             };
         });
-    }, [branches, sales, inventory]);
+    }, [retailBranches, sales, inventory]);
+
+    const handleExportExcel = () => {
+        const generatedAt = new Date();
+        const fileDate = formatDateForFile(generatedAt);
+        const workbookXml = buildManagerWorkbookXml({
+            branchName: user?.branch_name || "Branch",
+            managerName: user?.name || "Manager",
+            generatedAt: generatedAt.toLocaleString(),
+            totalStock,
+            totalSales,
+            lowStockItems,
+            managerBranchSales,
+            managerBranchInventory,
+            topSellingProducts,
+            branchPerformance,
+            products,
+        });
+        const blob = new Blob([workbookXml], {
+            type: "application/vnd.ms-excel;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = `RetailPulse_Manager_Branch_Report_${fileDate}.xls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
 
     if (loading) {
         return (
@@ -191,8 +266,18 @@ export default function ManagerDashboard() {
                             <button
                                 onClick={fetchData}
                                 className="grid h-11 w-11 place-items-center rounded-full bg-white shadow"
+                                title="Refresh dashboard"
                             >
                                 <RefreshCcw size={18} />
+                            </button>
+
+                            <button
+                                onClick={handleExportExcel}
+                                className="flex h-11 items-center gap-2 rounded-full bg-white px-4 text-sm font-extrabold text-[#17325c] shadow transition hover:bg-[#f8fcff]"
+                                title="Download branch Excel report"
+                            >
+                                <FileSpreadsheet size={18} className="text-green-600" />
+                                Excel
                             </button>
 
                             <button
@@ -284,7 +369,7 @@ export default function ManagerDashboard() {
                                 </div>
 
                                 <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-bold text-[#1e4db7]">
-                                    {branches.length} branch(es)
+                                    {retailBranches.length} branch(es)
                                 </span>
                             </div>
 
@@ -742,4 +827,309 @@ function SettingToggle({ label, value, onChange }) {
             </button>
         </div>
     );
+}
+
+function buildManagerWorkbookXml({
+    branchName,
+    managerName,
+    generatedAt,
+    totalStock,
+    totalSales,
+    lowStockItems,
+    managerBranchSales,
+    managerBranchInventory,
+    topSellingProducts,
+    branchPerformance,
+    products,
+}) {
+    const averageTransaction = managerBranchSales.length
+        ? totalSales / managerBranchSales.length
+        : 0;
+    const unitsSold = topSellingProducts.reduce(
+        (sum, item) => sum + Number(item.quantity || 0),
+        0
+    );
+    const stockCoverage = unitsSold
+        ? `${(totalStock / unitsSold).toFixed(1)} stock units per sold unit`
+        : "No sales quantity recorded";
+    const topSeller = topSellingProducts[0]?.product_name || "No sales data";
+    const productById = new Map(
+        products.map((product) => [Number(product.product_id), product])
+    );
+
+    const summaryRows = [
+        [textCell("RetailPulse Manager Branch Report", "Title", { mergeAcross: 3 })],
+        [textCell("Branch", "SummaryLabel"), textCell(branchName)],
+        [textCell("Manager", "SummaryLabel"), textCell(managerName)],
+        [textCell("Generated Date and Time", "SummaryLabel"), textCell(generatedAt)],
+        [textCell("Branch Sales", "SummaryLabel"), numberCell(totalSales, "Currency")],
+        [textCell("Sales Records", "SummaryLabel"), numberCell(managerBranchSales.length)],
+        [textCell("Average Transaction Value", "SummaryLabel"), numberCell(averageTransaction, "Currency")],
+        [textCell("Current Branch Stock", "SummaryLabel"), numberCell(totalStock)],
+        [textCell("Low Stock Items", "SummaryLabel"), numberCell(lowStockItems.length)],
+        [textCell("Top Selling Product", "SummaryLabel"), textCell(topSeller)],
+        [textCell("Stock Coverage Signal", "SummaryLabel"), textCell(stockCoverage)],
+    ];
+
+    const salesRows = [
+        headerRow(["Sale Code", "Date", "Cashier", "Payment Method", "Amount (RM)"]),
+        ...managerBranchSales.map((sale) => [
+            textCell(sale.sale_code || "-"),
+            textCell(formatReportDate(sale.sale_date)),
+            textCell(sale.user_name || "-"),
+            textCell(sale.payment_method || "-"),
+            numberCell(sale.total_amount, "Currency"),
+        ]),
+    ];
+
+    const stockRows = [
+        headerRow([
+            "Product Code",
+            "Product Name",
+            "Current Stock",
+            "Reorder Level",
+            "Stock Status",
+            "Last Updated",
+        ]),
+        ...managerBranchInventory
+            .slice()
+            .sort((a, b) => Number(a.quantity_in_stock || 0) - Number(b.quantity_in_stock || 0))
+            .map((item) => {
+                const product = productById.get(Number(item.product_id));
+                const reorderLevel = Number(product?.reorder_level || 10);
+                const quantity = Number(item.quantity_in_stock || 0);
+                const status = quantity <= reorderLevel ? "Needs Restock" : "Stable";
+
+                return [
+                    textCell(item.product_code || product?.product_code || "-"),
+                    textCell(item.product_name || product?.product_name || "-"),
+                    numberCell(quantity),
+                    numberCell(reorderLevel),
+                    textCell(status, status === "Needs Restock" ? "Urgent" : "Sufficient"),
+                    textCell(formatReportDate(item.last_updated)),
+                ];
+            }),
+    ];
+
+    const lowStockRows = [
+        headerRow(["Product Code", "Product Name", "Remaining Stock", "Reorder Level", "Recommendation"]),
+        ...lowStockItems.map((item) => {
+            const product = productById.get(Number(item.product_id));
+            const reorderLevel = Number(product?.reorder_level || 10);
+
+            return [
+                textCell(item.product_code || product?.product_code || "-"),
+                textCell(item.product_name || product?.product_name || "-"),
+                numberCell(item.quantity_in_stock),
+                numberCell(reorderLevel),
+                textCell("Restock or request transfer", "Urgent"),
+            ];
+        }),
+    ];
+
+    const topSellingRows = [
+        headerRow(["Rank", "Product Code", "Product Name", "Quantity Sold", "Revenue (RM)"]),
+        ...topSellingProducts.map((item, index) => [
+            numberCell(index + 1),
+            textCell(item.product_code || "-"),
+            textCell(item.product_name || "-"),
+            numberCell(item.quantity),
+            numberCell(item.revenue, "Currency"),
+        ]),
+    ];
+
+    const comparisonRows = [
+        headerRow(["Branch", "Revenue (RM)", "Transactions", "Stock"]),
+        ...branchPerformance.map((branch) => [
+            textCell(branch.branch_name || "-"),
+            numberCell(branch.revenue, "Currency"),
+            numberCell(branch.transactions),
+            numberCell(branch.stock),
+        ]),
+    ];
+
+    const worksheets = [
+        buildWorksheet("Executive Summary", summaryRows),
+        buildWorksheet("Branch Sales", salesRows, { freezeHeader: true }),
+        buildWorksheet("Branch Stock", stockRows, { freezeHeader: true }),
+        buildWorksheet("Low Stock Alerts", lowStockRows, { freezeHeader: true }),
+        buildWorksheet("Top Selling Products", topSellingRows, { freezeHeader: true }),
+        buildWorksheet("Branch Comparison", comparisonRows, { freezeHeader: true }),
+    ];
+
+    return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+${buildWorkbookStyles()}
+${worksheets.join("\n")}
+</Workbook>`;
+}
+
+function buildWorksheet(name, rows, options = {}) {
+    const safeRows = rows.length ? rows : [[textCell("No data found")]];
+    const columnCount = Math.max(
+        ...safeRows.map((row) =>
+            row.reduce((count, cell) => count + 1 + Number(cell.mergeAcross || 0), 0)
+        ),
+        1
+    );
+    const widths = getColumnWidths(safeRows, columnCount);
+
+    return `<Worksheet ss:Name="${xmlEscape(name)}">
+<Table>
+${widths.map((width) => `<Column ss:AutoFitWidth="0" ss:Width="${width}"/>`).join("\n")}
+${safeRows.map(buildRowXml).join("\n")}
+</Table>
+${options.freezeHeader ? buildFrozenHeaderOptions() : ""}
+</Worksheet>`;
+}
+
+function buildWorkbookStyles() {
+    return `<Styles>
+<Style ss:ID="Default" ss:Name="Normal">
+<Alignment ss:Vertical="Center"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Color="#17325C"/>
+</Style>
+<Style ss:ID="Title">
+<Alignment ss:Vertical="Center"/>
+<Font ss:FontName="Calibri" ss:Size="18" ss:Bold="1" ss:Color="#FFFFFF"/>
+<Interior ss:Color="#0C2F73" ss:Pattern="Solid"/>
+</Style>
+<Style ss:ID="Header">
+<Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+<Interior ss:Color="#1E4DB7" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#B7CBE8")}</Borders>
+</Style>
+<Style ss:ID="SummaryLabel">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#07102F"/>
+<Interior ss:Color="#EEF6FB" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#D9E8F7")}</Borders>
+</Style>
+<Style ss:ID="Currency">
+<NumberFormat ss:Format="&quot;RM&quot; #,##0.00"/>
+<Borders>${buildBorderXml("#E3ECF7")}</Borders>
+</Style>
+<Style ss:ID="Urgent">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#991B1B"/>
+<Interior ss:Color="#FEE2E2" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#FCA5A5")}</Borders>
+</Style>
+<Style ss:ID="Sufficient">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#166534"/>
+<Interior ss:Color="#DCFCE7" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#86EFAC")}</Borders>
+</Style>
+<Style ss:ID="Cell">
+<Borders>${buildBorderXml("#E3ECF7")}</Borders>
+</Style>
+</Styles>`;
+}
+
+function buildFrozenHeaderOptions() {
+    return `<WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+<FreezePanes/>
+<FrozenNoSplit/>
+<SplitHorizontal>1</SplitHorizontal>
+<TopRowBottomPane>1</TopRowBottomPane>
+<ActivePane>2</ActivePane>
+</WorksheetOptions>`;
+}
+
+function buildBorderXml(color) {
+    return `<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>`;
+}
+
+function getColumnWidths(rows, columnCount) {
+    const widths = Array.from({ length: columnCount }, () => 80);
+
+    rows.forEach((row) => {
+        let columnIndex = 0;
+
+        row.forEach((cell) => {
+            const span = 1 + Number(cell.mergeAcross || 0);
+            const textLength = String(cell.value ?? "").length;
+            const calculatedWidth = Math.min(Math.max(textLength * 7 + 20, 80), 260);
+
+            widths[columnIndex] = Math.max(widths[columnIndex], calculatedWidth);
+            columnIndex += span;
+        });
+    });
+
+    return widths.map((width) => Math.round(width));
+}
+
+function buildRowXml(row, rowIndex) {
+    const height = rowIndex === 0 ? 28 : 22;
+
+    return `<Row ss:Height="${height}">
+${row.map(buildCellXml).join("\n")}
+</Row>`;
+}
+
+function buildCellXml(cell) {
+    const attributes = [
+        `ss:StyleID="${cell.style || "Cell"}"`,
+        cell.mergeAcross ? `ss:MergeAcross="${cell.mergeAcross}"` : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    return `<Cell ${attributes}><Data ss:Type="${cell.type}">${xmlEscape(
+        cell.value
+    )}</Data></Cell>`;
+}
+
+function headerRow(labels) {
+    return labels.map((label) => textCell(label, "Header"));
+}
+
+function textCell(value, style = "Cell", options = {}) {
+    return {
+        type: "String",
+        value: value ?? "",
+        style,
+        ...options,
+    };
+}
+
+function numberCell(value, style = "Cell") {
+    return {
+        type: "Number",
+        value: Number(value || 0).toFixed(2).replace(/\.00$/, ""),
+        style,
+    };
+}
+
+function xmlEscape(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function formatDateForFile(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}${month}${day}`;
+}
+
+function formatReportDate(value) {
+    if (!value) return "-";
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+
+    return date.toLocaleString();
 }

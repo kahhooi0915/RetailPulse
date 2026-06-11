@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { HelpCircle } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import { formatCurrency } from "../utils/formatCurrency";
 
 const API = "http://localhost:5000";
+const PROFIT_MARGIN_TOOLTIP =
+    "Profit Margin is calculated as Gross Profit divided by Total Revenue, multiplied by 100. Gross Profit uses each sale item's unit price minus the latest purchase cost, multiplied by quantity sold.";
 
 export default function SalesMonitoring() {
     const user = JSON.parse(sessionStorage.getItem("user")) || {};
@@ -34,7 +37,8 @@ export default function SalesMonitoring() {
     };
 
     useEffect(() => {
-        fetchData();
+        const timer = window.setTimeout(fetchData, 0);
+        return () => window.clearTimeout(timer);
     }, []);
 
     const branches = useMemo(() => {
@@ -77,6 +81,27 @@ export default function SalesMonitoring() {
         (sum, sale) => sum + Number(sale.total_amount || 0),
         0
     );
+
+    const filteredSaleIds = useMemo(() => {
+        return new Set(filteredSales.map((sale) => Number(sale.sale_id)));
+    }, [filteredSales]);
+
+    const filteredDetails = useMemo(() => {
+        return details.filter((item) => filteredSaleIds.has(Number(item.sale_id)));
+    }, [details, filteredSaleIds]);
+
+    const productSold = filteredDetails.reduce(
+        (sum, item) => sum + Number(item.quantity || 0),
+        0
+    );
+
+    const grossProfit = filteredDetails.reduce(
+        (sum, item) => sum + Number(item.gross_profit || 0),
+        0
+    );
+
+    const profitMargin =
+        totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
     const branchSummary = useMemo(() => {
         const map = {};
@@ -123,7 +148,7 @@ export default function SalesMonitoring() {
     const topProducts = useMemo(() => {
         const map = {};
 
-        details.forEach((item) => {
+        filteredDetails.forEach((item) => {
             const name = item.product_name || "Unknown Product";
 
             if (!map[name]) {
@@ -141,7 +166,7 @@ export default function SalesMonitoring() {
         return Object.values(map)
             .sort((a, b) => b.quantity - a.quantity)
             .slice(0, 5);
-    }, [details]);
+    }, [filteredDetails]);
 
     return (
         <DashboardLayout
@@ -151,9 +176,15 @@ export default function SalesMonitoring() {
             onRefresh={fetchData}
         >
             <div className="space-y-6">
-                <div className="grid grid-cols-1 gap-5 md:grid-cols-4">
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-3 xl:grid-cols-6">
                     <SummaryCard title="Total Revenue" value={formatCurrency(totalRevenue)} />
                     <SummaryCard title="Transactions" value={totalTransactions} />
+                    <SummaryCard title="Product Sold" value={productSold} />
+                    <SummaryCard
+                        title="Profit Margin"
+                        value={`${profitMargin.toFixed(2)}%`}
+                        tooltip={PROFIT_MARGIN_TOOLTIP}
+                    />
                     <SummaryCard title="Average Sale" value={formatCurrency(avgTransaction)} />
                     <SummaryCard title="Today Revenue" value={formatCurrency(todayRevenue)} />
                 </div>
@@ -191,9 +222,9 @@ export default function SalesMonitoring() {
                         </div>
                     </div>
 
-                    <div className="mt-5 overflow-x-auto">
+                    <div className="mt-5 max-h-[430px] overflow-auto pr-1">
                         <table className="w-full min-w-[850px] text-left text-sm">
-                            <thead>
+                            <thead className="sticky top-0 z-10 bg-white">
                                 <tr className="border-b text-[#6f85a3]">
                                     <th className="py-3">Sale Code</th>
                                     <th>Branch</th>
@@ -318,10 +349,26 @@ export default function SalesMonitoring() {
     );
 }
 
-function SummaryCard({ title, value }) {
+function SummaryCard({ title, value, tooltip }) {
     return (
         <div className="rounded-3xl bg-white p-5 shadow">
-            <p className="text-sm font-bold text-[#6f85a3]">{title}</p>
+            <div className="flex items-center gap-1.5">
+                <p className="text-sm font-bold text-[#6f85a3]">{title}</p>
+                {tooltip && (
+                    <span className="group relative inline-flex">
+                        <button
+                            type="button"
+                            className="grid h-5 w-5 place-items-center rounded-full text-[#6f85a3] transition hover:bg-[#eef6fb] hover:text-[#1e4db7]"
+                            aria-label={tooltip}
+                        >
+                            <HelpCircle size={14} />
+                        </button>
+                        <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-lg border border-blue-100 bg-white p-3 text-left text-xs font-semibold text-[#17325c] shadow-xl group-hover:block">
+                            {tooltip}
+                        </span>
+                    </span>
+                )}
+            </div>
             <h3 className="mt-3 text-2xl font-extrabold text-[#07102f]">
                 {value}
             </h3>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { Bot, Minus, Send, Sparkles, X } from "lucide-react";
@@ -29,8 +29,17 @@ const DEFAULT_MESSAGES = [
     {
         sender: "bot",
         text: "Hi there! I am your RetailPulse AI Business Assistant. I can analyze sales, inventory, forecasts, and operational risks to support decisions. I cannot create, update, approve, reject, or modify records.",
+        suggestedQuestions: SUGGESTED_QUESTIONS,
     },
 ];
+
+function withSuggestedQuestions(message) {
+    if (message?.sender !== "bot") return message;
+    return {
+        ...message,
+        suggestedQuestions: message.suggestedQuestions || SUGGESTED_QUESTIONS,
+    };
+}
 
 export default function FloatingAIAssistant({ notificationCount = 0 }) {
     const location = useLocation();
@@ -42,15 +51,15 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
     const [messages, setMessages] = useState(() => {
         try {
             const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
-            return Array.isArray(saved) && saved.length > 0 ? saved : DEFAULT_MESSAGES;
+            return Array.isArray(saved) && saved.length > 0
+                ? saved.map(withSuggestedQuestions)
+                : DEFAULT_MESSAGES;
         } catch {
             return DEFAULT_MESSAGES;
         }
     });
 
     const shouldShow = ALLOWED_PATHS.has(location.pathname);
-    const showSuggestions = useMemo(() => messages.length <= 1, [messages.length]);
-
     useEffect(() => {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     }, [messages]);
@@ -63,8 +72,12 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
 
     useEffect(() => {
         if (!shouldShow) {
-            setIsOpen(false);
-            setIsMinimized(false);
+            const frameId = window.requestAnimationFrame(() => {
+                setIsOpen(false);
+                setIsMinimized(false);
+            });
+
+            return () => window.cancelAnimationFrame(frameId);
         }
     }, [shouldShow]);
 
@@ -88,15 +101,18 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
                 {
                     sender: "bot",
                     text: response.data.answer || "AI service is currently unavailable. Please try again later.",
+                    suggestedQuestions: response.data.suggested_questions || SUGGESTED_QUESTIONS,
                 },
             ]);
         } catch (error) {
             console.error("AI assistant error:", error);
+            const responseData = error.response?.data;
             setMessages((prev) => [
                 ...prev,
                 {
                     sender: "bot",
-                    text: "AI service is currently unavailable. Please try again later.",
+                    text: responseData?.answer || "AI service is currently unavailable. Please try again later.",
+                    suggestedQuestions: responseData?.suggested_questions || SUGGESTED_QUESTIONS,
                 },
             ]);
         } finally {
@@ -142,28 +158,6 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
                     </div>
 
                     <div className="max-h-[min(560px,62vh)] overflow-y-auto bg-[#f8fcff] px-5 py-5">
-                        {showSuggestions && (
-                            <div className="mb-5 rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
-                                <div className="mb-3 flex items-center gap-2 text-sm font-extrabold text-[#07102f]">
-                                    <Sparkles size={17} className="text-[#1e4db7]" />
-                                    Suggested questions
-                                </div>
-                                <div className="space-y-2">
-                                    {SUGGESTED_QUESTIONS.map((question) => (
-                                        <button
-                                            key={question}
-                                            type="button"
-                                            disabled={isLoading}
-                                            onClick={() => sendMessage(question)}
-                                            className="w-full rounded-xl border border-blue-100 bg-[#f8fcff] px-4 py-3 text-left text-sm font-semibold text-[#17325c] transition hover:border-[#1e4db7] hover:bg-[#eef6fb] disabled:cursor-wait disabled:opacity-70"
-                                        >
-                                            {question}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
                         <div className="space-y-4">
                             {messages.map((message, index) => (
                                 <div
@@ -175,7 +169,16 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
                                             {message.text}
                                         </div>
                                     ) : (
-                                        <AIResponseCard text={message.text} />
+                                        <div className="flex w-full max-w-[86%] flex-col items-start gap-3">
+                                            <AIResponseCard text={message.text} />
+                                            {Array.isArray(message.suggestedQuestions) && message.suggestedQuestions.length > 0 && (
+                                                <SuggestedQuestions
+                                                    questions={message.suggestedQuestions}
+                                                    isLoading={isLoading}
+                                                    onSelect={sendMessage}
+                                                />
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             ))}
@@ -250,7 +253,7 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
 
 function AIResponseCard({ text }) {
     return (
-        <div className="w-full max-w-[86%] overflow-hidden rounded-2xl border border-blue-100 bg-white px-4 py-3 text-sm leading-6 text-[#17325c] shadow-sm">
+        <div className="w-full overflow-hidden rounded-2xl border border-blue-100 bg-white px-4 py-3 text-sm leading-6 text-[#17325c] shadow-sm">
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
@@ -323,6 +326,30 @@ function AIResponseCard({ text }) {
             >
                 {text}
             </ReactMarkdown>
+        </div>
+    );
+}
+
+function SuggestedQuestions({ questions, isLoading, onSelect }) {
+    return (
+        <div className="w-full rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2 text-sm font-extrabold text-[#07102f]">
+                <Sparkles size={17} className="text-[#1e4db7]" />
+                Suggested questions
+            </div>
+            <div className="space-y-2">
+                {questions.map((question) => (
+                    <button
+                        key={question}
+                        type="button"
+                        disabled={isLoading}
+                        onClick={() => onSelect(question)}
+                        className="w-full rounded-xl border border-blue-100 bg-[#f8fcff] px-4 py-3 text-left text-sm font-semibold text-[#17325c] transition hover:border-[#1e4db7] hover:bg-[#eef6fb] disabled:cursor-wait disabled:opacity-70"
+                    >
+                        {question}
+                    </button>
+                ))}
+            </div>
         </div>
     );
 }

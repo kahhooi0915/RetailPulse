@@ -16,3 +16,129 @@
 .animate-slideUp {
   animation: slideUp 0.4s ease-out;
 }
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 4mm;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    min-height: auto !important;
+    background: #ffffff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #receipt-pdf,
+  #receipt-pdf * {
+    visibility: visible !important;
+  }
+
+  #receipt-pdf {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 !important;
+    padding: 5mm !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    color: #222222 !important;
+    font-family: "Courier New", Courier, monospace !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+  }
+
+  #receipt-pdf::before,
+  #receipt-pdf::after {
+    content: "************************";
+    display: block;
+    overflow: hidden;
+    color: #222222;
+    font-weight: 700;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+
+  #receipt-pdf::before {
+    margin-bottom: 12px;
+  }
+
+  #receipt-pdf::after {
+    margin-top: 12px;
+  }
+
+  .receipt-print-surface h2 {
+    color: #222222 !important;
+    font-size: 20px !important;
+    letter-spacing: 3px !important;
+    text-transform: uppercase !important;
+  }
+
+  .receipt-print-meta,
+  .receipt-print-items-head,
+  .receipt-print-item {
+    display: grid !important;
+    grid-template-columns: 1fr 28px 62px !important;
+    gap: 6px !important;
+  }
+
+  .receipt-print-meta {
+    padding: 0 0 12px !important;
+    border-radius: 0 !important;
+    border-bottom: 1px dashed #222222 !important;
+    background: transparent !important;
+  }
+
+  .receipt-print-meta > div:nth-child(2),
+  .receipt-print-meta > div:nth-child(4) {
+    text-align: left !important;
+  }
+
+  .receipt-print-meta > div {
+    grid-column: 1 / -1;
+  }
+
+  .receipt-print-items-head {
+    margin-bottom: 8px !important;
+    color: #222222 !important;
+    letter-spacing: 1px !important;
+  }
+
+  .receipt-print-item {
+    margin-bottom: 6px !important;
+    color: #222222 !important;
+    font-size: 11px !important;
+  }
+
+  .receipt-print-divider {
+    margin: 12px 0 !important;
+    border-color: #222222 !important;
+  }
+
+  .receipt-print-totals {
+    color: #222222 !important;
+    font-size: 11px !important;
+  }
+
+  .receipt-print-grand-total {
+    margin-top: 8px !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #222222 !important;
+    font-size: 18px !important;
+  }
+
+  .receipt-print-payment {
+    margin-top: 14px !important;
+    padding-bottom: 12px !important;
+    border-color: #222222 !important;
+  }
+}

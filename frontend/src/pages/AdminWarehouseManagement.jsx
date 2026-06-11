@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -814,12 +815,13 @@ function TransferDetailsModal({ transfer, onClose }) {
                             Product Details
                         </h3>
                         <div className="overflow-x-auto">
-                            <table className="w-full min-w-[940px] border-separate border-spacing-0 text-left text-sm">
+                            <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-left text-sm">
                                 <thead className="bg-[#f8fcff] text-[#6f85a3]">
                                     <tr>
                                         <th className="border-b py-3 pr-4 text-xs font-extrabold uppercase">Product Code</th>
                                         <th className="border-b px-4 text-xs font-extrabold uppercase">Product Name</th>
                                         <th className="border-b px-4 text-right text-xs font-extrabold uppercase">Requested Quantity</th>
+                                        <th className="border-b px-4 text-right text-xs font-extrabold uppercase">Current Warehouse Stock</th>
                                         <th className="border-b px-4 text-right text-xs font-extrabold uppercase">Source Before</th>
                                         <th className="border-b px-4 text-right text-xs font-extrabold uppercase">Source After</th>
                                         <th className="border-b px-4 text-right text-xs font-extrabold uppercase">Destination Before</th>
@@ -842,6 +844,9 @@ function TransferDetailsModal({ transfer, onClose }) {
                                                 <td className="border-b border-blue-50 px-4 text-right font-extrabold">
                                                     {item.quantity}
                                                 </td>
+                                                <td className="border-b border-blue-50 px-4 text-right">
+                                                    <WarehouseStockReminder item={item} />
+                                                </td>
                                                 <td className="border-b border-blue-50 px-4 text-right font-bold">
                                                     {formatStock(item.source_stock_before)}
                                                 </td>
@@ -857,7 +862,7 @@ function TransferDetailsModal({ transfer, onClose }) {
                                             </tr>
                                         ))
                                     ) : (
-                                        <EmptyRow colSpan={7} text="No transfer detail items found." />
+                                        <EmptyRow colSpan={8} text="No transfer detail items found." />
                                     )}
                                 </tbody>
                             </table>
@@ -894,6 +899,29 @@ function InfoItem({ label, value }) {
         <div className="rounded-2xl bg-[#f8fcff] p-4">
             <p className="text-xs font-extrabold uppercase text-[#6f85a3]">{label}</p>
             <div className="mt-2 text-sm font-extrabold text-[#07102f]">{value}</div>
+        </div>
+    );
+}
+
+function WarehouseStockReminder({ item }) {
+    const currentStock = Number(item.current_source_stock || 0);
+    const requestedQuantity = Number(item.quantity || 0);
+    const hasEnoughStock = currentStock >= requestedQuantity;
+
+    return (
+        <div className="inline-flex flex-col items-end gap-1">
+            <span className="font-extrabold text-[#07102f]">
+                {formatStock(currentStock)}
+            </span>
+            <span
+                className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold ${
+                    hasEnoughStock
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-red-50 text-red-700"
+                }`}
+            >
+                {hasEnoughStock ? "Enough stock" : "Not enough stock"}
+            </span>
         </div>
     );
 }

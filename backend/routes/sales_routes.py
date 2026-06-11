@@ -347,10 +347,34 @@ def admin_get_sale_details():
         cur.execute("""
             SELECT sd.detail_id, sd.sale_id, s.sale_code,
                    sd.product_id, p.product_code, p.product_name,
-                   sd.quantity, sd.unit_price, sd.subtotal
+                   sd.quantity, sd.unit_price, sd.subtotal,
+                   COALESCE(latest_purchase.unit_cost, supplier_cost.purchase_price, 0) AS purchase_cost,
+                   (sd.unit_price - COALESCE(latest_purchase.unit_cost, supplier_cost.purchase_price, 0)) * sd.quantity AS gross_profit
             FROM sale_detail sd
             JOIN sale s ON sd.sale_id = s.sale_id
             JOIN product p ON sd.product_id = p.product_id
+            LEFT JOIN LATERAL (
+                SELECT pd.unit_cost
+                FROM purchase_detail pd
+                JOIN purchase po ON pd.purchase_id = po.purchase_id
+                WHERE pd.product_id = sd.product_id
+                  AND po.status = 'RECEIVED'
+                ORDER BY po.purchase_date DESC NULLS LAST,
+                         po.purchase_id DESC,
+                         pd.purchase_detail_id DESC
+                LIMIT 1
+            ) latest_purchase ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT sp.purchase_price
+                FROM supplier_product sp
+                JOIN supplier sup ON sp.supplier_id = sup.supplier_id
+                WHERE sp.product_id = sd.product_id
+                  AND sup.status = 'ACTIVE'
+                ORDER BY sp.is_preferred DESC,
+                         sp.purchase_price ASC,
+                         sp.supplier_id ASC
+                LIMIT 1
+            ) supplier_cost ON TRUE
             ORDER BY sd.detail_id
         """)
 
@@ -367,7 +391,9 @@ def admin_get_sale_details():
                 "product_name": row[5],
                 "quantity": row[6],
                 "unit_price": float(row[7]),
-                "subtotal": float(row[8])
+                "subtotal": float(row[8]),
+                "purchase_cost": float(row[9]),
+                "gross_profit": float(row[10])
             })
 
         cur.close()

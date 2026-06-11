@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import traceback
 import urllib.error
 import urllib.request
 from decimal import Decimal
@@ -13,10 +14,17 @@ from services.forecast_service import get_forecast_summary
 ai_bp = Blueprint("ai_bp", __name__)
 
 GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite"]
 GEMINI_MAX_OUTPUT_TOKENS = 2048
-GEMINI_ENDPOINT = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-)
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+SUGGESTED_QUESTIONS = [
+    "Which products should be reordered immediately?",
+    "Which product is expected to become the top seller next month?",
+    "Which branch currently requires the most attention?",
+    "Summarize current inventory status.",
+    "Summarize sales performance.",
+]
 
 
 def _to_number(value):
@@ -30,6 +38,45 @@ def _close(conn=None, cur=None):
         cur.close()
     if conn:
         conn.close()
+
+
+def _mask_secret(value):
+    if not value:
+        return "<missing>"
+    if len(value) <= 8:
+        return "<set but too short to mask safely>"
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _read_error_body(error):
+    try:
+        return error.read().decode("utf-8", errors="replace")
+    except Exception as read_error:
+        return f"<could not read error body: {read_error}>"
+
+
+def _get_gemini_endpoint(model):
+    return f"{GEMINI_API_BASE_URL}/{model}:generateContent"
+
+
+def _log_gemini_configuration(api_key, model):
+    print(
+        "Gemini configuration: "
+        f"model={model}, "
+        f"endpoint={_get_gemini_endpoint(model)}, "
+        f"api_key_loaded={bool(api_key)}, "
+        f"api_key_length={len(api_key or '')}, "
+        f"api_key_masked={_mask_secret(api_key)}"
+    )
+
+
+def _log_gemini_http_error(error):
+    body = _read_error_body(error)
+    print("ERROR Gemini API HTTP status:", getattr(error, "code", "<unknown>"))
+    print("ERROR Gemini API HTTP reason:", getattr(error, "reason", "<unknown>"))
+    print("ERROR Gemini API HTTP headers:", dict(getattr(error, "headers", {}) or {}))
+    print("ERROR Gemini API HTTP body:", body)
+    return body
 
 
 def _detect_intent(message):
@@ -266,7 +313,6 @@ def _fetch_branch_attention_summary():
         FROM branch b
         LEFT JOIN inventory_summary i ON b.branch_id = i.branch_id
         LEFT JOIN sales_summary s ON b.branch_id = s.branch_id
-        WHERE b.status = 'ACTIVE'
         ORDER BY low_stock_items DESC, out_of_stock_items DESC, sales_revenue ASC
         LIMIT 8
     """)
@@ -353,13 +399,12 @@ def _ask_gemini(message, intent, context):
     }
 
     payload = {
+        "system_instruction": {
+            "parts": [{"text": system_prompt}],
+        },
         "contents": [
             {
-                "role": "user",
-                "parts": [
-                    {"text": system_prompt},
-                    {"text": json.dumps(user_prompt, default=str)},
-                ],
+                "parts": [{"text": json.dumps(user_prompt, default=str)}],
             }
         ],
         "generationConfig": {
@@ -368,18 +413,60 @@ def _ask_gemini(message, intent, context):
         },
     }
 
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{GEMINI_ENDPOINT}?key={api_key}",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    response_text = None
+    last_error = None
+    models_to_try = [GEMINI_MODEL, *GEMINI_FALLBACK_MODELS]
 
-    with urllib.request.urlopen(req, timeout=20) as response:
-        response_text = response.read().decode("utf-8")
+    for model in models_to_try:
+        _log_gemini_configuration(api_key, model)
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            _get_gemini_endpoint(model),
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
+            method="POST",
+        )
 
-    print("Gemini response:", response_text)
+        print(
+            "Gemini request payload:",
+            json.dumps(
+                {
+                    "model": model,
+                    "intent": intent,
+                    "payload": payload,
+                },
+                default=str,
+            ),
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                response_text = response.read().decode("utf-8")
+                print("Gemini HTTP status:", getattr(response, "status", "<unknown>"))
+                print("Gemini response model attempted:", model)
+                print("Gemini response body:", response_text)
+                break
+        except urllib.error.HTTPError as error:
+            last_error = error
+            _log_gemini_http_error(error)
+            continue
+        except urllib.error.URLError as error:
+            last_error = error
+            print("ERROR Gemini API URL/network error:", repr(error))
+            continue
+        except TimeoutError as error:
+            last_error = error
+            print("ERROR Gemini API timeout:", repr(error))
+            continue
+
+    if response_text is None:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Gemini did not return a response")
+
     result = json.loads(response_text)
 
     candidates = result.get("candidates") or []
@@ -392,6 +479,115 @@ def _ask_gemini(message, intent, context):
         raise RuntimeError("Gemini returned an empty response")
 
     return text
+
+
+def _format_rm(value):
+    return f"RM {float(_to_number(value) or 0):,.2f}"
+
+
+def _format_fallback_answer(intent, context):
+    if not context or context.get("data_available") is False:
+        return None
+
+    if intent == "branch_attention":
+        rows = context.get("rows") or []
+        if not rows:
+            return "I could not find branch inventory or sales records to rank branch attention right now."
+
+        top = rows[0]
+        lines = [
+            f"**{top['branch_name']}** currently requires the most attention.",
+            "",
+            "It ranks highest based on low-stock pressure, out-of-stock items, and lower sales revenue.",
+            "",
+            "| Branch | Low-stock items | Out of stock | Stock units | Sales | Revenue |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+        for row in rows[:5]:
+            lines.append(
+                f"| {row['branch_name']} | {row['low_stock_items']} | {row['out_of_stock_items']} | "
+                f"{row['total_stock_units']} | {row['sales_count']} | {_format_rm(row['sales_revenue'])} |"
+            )
+        lines.extend([
+            "",
+            "Recommended next step: prioritize replenishment for branches with the most low-stock and out-of-stock items.",
+        ])
+        return "\n".join(lines)
+
+    if intent in ("low_stock_product", "reorder_suggestion", "inventory_summary"):
+        summary = context.get("summary") or {}
+        rows = context.get("rows") or []
+        lines = [
+            "**Current inventory status**",
+            "",
+            f"- Total stock units: **{summary.get('total_stock_units', 0)}**",
+            f"- Low-stock rows: **{summary.get('low_stock_rows', 0)}**",
+            f"- Out-of-stock rows: **{summary.get('out_of_stock_rows', 0)}**",
+        ]
+        if rows:
+            lines.extend([
+                "",
+                "| Product | Branch | Stock | Reorder level | Suggested reorder |",
+                "|---|---|---:|---:|---:|",
+            ])
+            for row in rows[:8]:
+                lines.append(
+                    "| {product_name} | {branch_name} | {quantity_in_stock} | "
+                    "{reorder_level} | {suggested_reorder_quantity} |".format(**row)
+                )
+        return "\n".join(lines)
+
+    if intent == "sales_summary":
+        summary = context.get("summary") or {}
+        top_products = context.get("top_products") or []
+        top_branches = context.get("top_branches") or []
+        lines = [
+            "**Sales performance summary**",
+            "",
+            f"- Sales count: **{summary.get('sales_count', 0)}**",
+            f"- Units sold: **{summary.get('units_sold', 0)}**",
+            f"- Total revenue: **{_format_rm(summary.get('total_revenue', 0))}**",
+        ]
+        if top_products:
+            lines.extend(["", "**Top products**"])
+            for row in top_products:
+                lines.append(
+                    f"- {row['product_name']}: {row['units_sold']} units, {_format_rm(row['revenue'])}"
+                )
+        if top_branches:
+            lines.extend(["", "**Top branches**"])
+            for row in top_branches:
+                lines.append(
+                    f"- {row['branch_name']}: {row['sales_count']} sales, {_format_rm(row['revenue'])}"
+                )
+        return "\n".join(lines)
+
+    if intent == "poor_selling_product":
+        rows = context.get("rows") or []
+        if not rows:
+            return "I could not find active products with sales data to rank poor-selling products right now."
+        lines = [
+            "**Lowest-selling active products**",
+            "",
+            "| Product | Units sold | Revenue |",
+            "|---|---:|---:|",
+        ]
+        for row in rows[:8]:
+            lines.append(f"| {row['product_name']} | {row['units_sold']} | {_format_rm(row['revenue'])} |")
+        return "\n".join(lines)
+
+    if intent == "top_seller_forecast":
+        top = context.get("predicted_top_seller")
+        if not top:
+            return None
+        return (
+            f"**{top}** is expected to become the top seller for "
+            f"{context.get('forecast_period') or 'the forecast period'}, with "
+            f"**{context.get('total_forecast_units', 0)}** forecast units and estimated revenue of "
+            f"**{_format_rm(context.get('predicted_revenue', 0))}**."
+        )
+
+    return None
 
 
 @ai_bp.route("/api/ai/chat", methods=["POST"])
@@ -410,22 +606,46 @@ def ai_chat():
         try:
             context = _build_data_context(intent)
         except Exception as e:
-            print("ERROR /api/ai/chat data context:", e)
+            print("ERROR /api/ai/chat data context type:", type(e).__name__)
+            print("ERROR /api/ai/chat data context message:", str(e))
+            print("ERROR /api/ai/chat data context traceback:", traceback.format_exc())
             context = {
                 "intent": intent,
                 "summary": "Backend business data could not be retrieved for this question.",
                 "data_available": False,
             }
-        answer = _ask_gemini(question, intent, context)
+        try:
+            answer = _ask_gemini(question, intent, context)
+        except (RuntimeError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+            print("ERROR Gemini API caught type:", type(e).__name__)
+            print("ERROR Gemini API caught message:", str(e))
+            print("ERROR Gemini API caught traceback:", traceback.format_exc())
+            fallback_answer = _format_fallback_answer(intent, context)
+            if fallback_answer:
+                answer = (
+                    fallback_answer
+                    + "\n\n> Gemini response generation is unavailable right now, so this answer was generated from RetailPulse backend data."
+                )
+            else:
+                return jsonify({
+                    "answer": "AI service is currently unavailable. Check the Flask server logs for the Gemini error details.",
+                    "suggested_questions": SUGGESTED_QUESTIONS,
+                }), 503
     except (RuntimeError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
-        print("ERROR Gemini API:", e)
+        print("ERROR Gemini API outer catch type:", type(e).__name__)
+        print("ERROR Gemini API outer catch message:", str(e))
+        print("ERROR Gemini API outer catch traceback:", traceback.format_exc())
         return jsonify({
-            "answer": "AI service is currently unavailable. Please try again later."
+            "answer": "AI service is currently unavailable. Check the Flask server logs for the Gemini error details.",
+            "suggested_questions": SUGGESTED_QUESTIONS,
         }), 503
     except Exception as e:
-        print("ERROR /api/ai/chat:", e)
+        print("ERROR /api/ai/chat type:", type(e).__name__)
+        print("ERROR /api/ai/chat message:", str(e))
+        print("ERROR /api/ai/chat traceback:", traceback.format_exc())
         return jsonify({
-            "answer": "AI service is currently unavailable. Please try again later."
+            "answer": "AI service is currently unavailable because the backend hit an unexpected error. Check the Flask server logs for details.",
+            "suggested_questions": SUGGESTED_QUESTIONS,
         }), 503
 
-    return jsonify({"answer": answer}), 200
+    return jsonify({"answer": answer, "suggested_questions": SUGGESTED_QUESTIONS}), 200

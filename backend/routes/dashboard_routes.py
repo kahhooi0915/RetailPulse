@@ -1,12 +1,35 @@
-from flask import Blueprint, jsonify
+from datetime import datetime
+
+from flask import Blueprint, jsonify, request
 from db import get_connection
 
 dashboard_bp = Blueprint("dashboard_bp", __name__)
 
 
+def _to_float(value):
+    return float(value or 0)
+
+
+def _dashboard_period_filter():
+    period = (request.args.get("period") or "monthly").strip().lower()
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+
+    if start_date and end_date:
+        datetime.strptime(start_date, "%Y-%m-%d")
+        datetime.strptime(end_date, "%Y-%m-%d")
+        return "custom", "AND s.sale_date::date BETWEEN %s AND %s", [start_date, end_date]
+
+    if period == "yearly":
+        return "yearly", "AND s.sale_date >= date_trunc('year', CURRENT_DATE)", []
+
+    return "monthly", "AND s.sale_date >= date_trunc('month', CURRENT_DATE)", []
+
+
 @dashboard_bp.route("/admin/dashboard/summary", methods=["GET"])
 def admin_dashboard_summary():
     try:
+        period, sale_date_filter, sale_date_params = _dashboard_period_filter()
         conn = get_connection()
         cur = conn.cursor()
 
@@ -17,10 +40,103 @@ def admin_dashboard_summary():
         """)
         pending_transfers = cur.fetchone()[0]
 
+        cur.execute(f"""
+            SELECT COALESCE(SUM(s.total_amount), 0)
+            FROM sale s
+            JOIN branch b ON s.branch_id = b.branch_id
+            WHERE b.branch_type = 'BRANCH'
+              {sale_date_filter}
+        """, sale_date_params)
+        total_sales = cur.fetchone()[0]
+
+        # Cost basis logic:
+        # 1. Use the latest RECEIVED purchase_detail.unit_cost per product.
+        # 2. If no received purchase exists, fall back to the preferred/lowest active supplier_product purchase_price.
+        # 3. If no purchase cost exists, use 0 so incomplete product setup does not break the dashboard.
+        cur.execute(f"""
+            SELECT COALESCE(
+                SUM(
+                    (
+                        COALESCE(p.selling_price, sd.unit_price, 0)
+                        - COALESCE(latest_purchase.unit_cost, supplier_cost.purchase_price, 0)
+                    ) * sd.quantity
+                ),
+                0
+            )
+            FROM sale_detail sd
+            JOIN sale s ON sd.sale_id = s.sale_id
+            JOIN branch b ON s.branch_id = b.branch_id
+            JOIN product p ON sd.product_id = p.product_id
+            LEFT JOIN LATERAL (
+                SELECT pd.unit_cost
+                FROM purchase_detail pd
+                JOIN purchase po ON pd.purchase_id = po.purchase_id
+                WHERE pd.product_id = sd.product_id
+                  AND po.status = 'RECEIVED'
+                ORDER BY po.purchase_date DESC NULLS LAST,
+                         po.purchase_id DESC,
+                         pd.purchase_detail_id DESC
+                LIMIT 1
+            ) latest_purchase ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT sp.purchase_price
+                FROM supplier_product sp
+                JOIN supplier sup ON sp.supplier_id = sup.supplier_id
+                WHERE sp.product_id = sd.product_id
+                  AND sup.status = 'ACTIVE'
+                ORDER BY sp.is_preferred DESC,
+                         sp.purchase_price ASC,
+                         sp.supplier_id ASC
+                LIMIT 1
+            ) supplier_cost ON TRUE
+            WHERE b.branch_type = 'BRANCH'
+              {sale_date_filter}
+        """, sale_date_params)
+        gross_profit = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(
+                SUM(
+                    i.quantity_in_stock
+                    * COALESCE(latest_purchase.unit_cost, supplier_cost.purchase_price, 0)
+                ),
+                0
+            )
+            FROM inventory i
+            JOIN product p ON i.product_id = p.product_id
+            LEFT JOIN LATERAL (
+                SELECT pd.unit_cost
+                FROM purchase_detail pd
+                JOIN purchase po ON pd.purchase_id = po.purchase_id
+                WHERE pd.product_id = i.product_id
+                  AND po.status = 'RECEIVED'
+                ORDER BY po.purchase_date DESC NULLS LAST,
+                         po.purchase_id DESC,
+                         pd.purchase_detail_id DESC
+                LIMIT 1
+            ) latest_purchase ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT sp.purchase_price
+                FROM supplier_product sp
+                JOIN supplier sup ON sp.supplier_id = sup.supplier_id
+                WHERE sp.product_id = i.product_id
+                  AND sup.status = 'ACTIVE'
+                ORDER BY sp.is_preferred DESC,
+                         sp.purchase_price ASC,
+                         sp.supplier_id ASC
+                LIMIT 1
+            ) supplier_cost ON TRUE
+        """)
+        inventory_value = cur.fetchone()[0]
+
         cur.close()
         conn.close()
 
         return jsonify({
+            "period": period,
+            "total_sales": _to_float(total_sales),
+            "gross_profit": _to_float(gross_profit),
+            "inventory_value": _to_float(inventory_value),
             "pending_transfers": pending_transfers
         }), 200
 

@@ -210,25 +210,33 @@ export default function InventoryOverview() {
             .map((product) => {
                 const forecast = forecastMap[Number(product.product_id)];
                 const forecastDemand = Number(forecast?.forecast_quantity || 0);
+                const recentSales = getRecentMonthlySales(forecast?.monthly_sales);
+                const recentSalesStats = getRecentSalesStats(recentSales);
                 const recommendedReorderLevel =
                     forecastDemand > 0
                         ? Math.ceil(forecastDemand * SAFETY_STOCK_MULTIPLIER)
                         : Number(product.reorder_level || DEFAULT_REORDER_LEVEL);
+                const recommendation = getReorderRecommendation(
+                    product.reorder_level,
+                    recommendedReorderLevel
+                );
 
                 return {
                     ...product,
                     forecastDemand,
+                    recentSales,
+                    recentSalesStats,
                     recommendedReorderLevel,
-                    recommendation: getReorderRecommendation(
-                        product.reorder_level,
-                        recommendedReorderLevel
-                    ),
+                    recommendation,
                     modelName: forecast?.selected_model || "-",
                     forecastMonth: forecast?.forecast_month,
-                    reason:
-                        forecastDemand > 0
-                            ? "Forecasting model predicts future sales demand from historical movement."
-                            : "No forecast demand is currently available, so the current reorder level is maintained.",
+                    reason: buildReorderReason({
+                        currentLevel: product.reorder_level,
+                        recommendedLevel: recommendedReorderLevel,
+                        forecastDemand,
+                        recommendation,
+                        recentSalesStats,
+                    }),
                 };
             })
             .sort((a, b) => a.product_name?.localeCompare(b.product_name || "") || 0);
@@ -954,9 +962,35 @@ function RecommendationModal({ item, onClose }) {
                         <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
                             Reason
                         </p>
-                        <p className="mt-2 font-extrabold text-[#17325c]">
+                        <p className="mt-2 text-sm font-extrabold leading-6 text-[#17325c]">
                             {item.reason}
                         </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-[#f8fcff] p-5">
+                        <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            Recent Sales Movement
+                        </p>
+                        {item.recentSales?.length > 0 ? (
+                            <div className="mt-3 space-y-2">
+                                {item.recentSales.map((sale) => (
+                                    <div
+                                        key={sale.month}
+                                        className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm font-extrabold text-[#17325c]"
+                                    >
+                                        <span>{formatMonthLabel(sale.month)}</span>
+                                        <span>{sale.quantity} units sold</span>
+                                    </div>
+                                ))}
+                                <p className="pt-1 text-xs font-bold text-[#6f85a3]">
+                                    Total: {item.recentSalesStats.total} units across {item.recentSalesStats.monthCount} recent recorded months.
+                                </p>
+                            </div>
+                        ) : (
+                            <p className="mt-2 text-sm font-extrabold text-[#17325c]">
+                                No recent monthly sales records are available for this product.
+                            </p>
+                        )}
                     </div>
 
                     <div className="flex justify-end">
@@ -1191,6 +1225,76 @@ function getReorderRecommendation(current, recommended) {
     if (Number(recommended) > Number(current)) return "Increase Reorder Level";
     if (Number(recommended) < Number(current)) return "Decrease Reorder Level";
     return "Keep Current Level";
+}
+
+function getRecentMonthlySales(monthlySales = [], limit = 3) {
+    if (!Array.isArray(monthlySales)) return [];
+
+    return monthlySales
+        .filter((item) => item?.month)
+        .map((item) => ({
+            month: item.month,
+            quantity: Number(item.quantity || 0),
+        }))
+        .sort((a, b) => String(a.month).localeCompare(String(b.month)))
+        .slice(-limit);
+}
+
+function getRecentSalesStats(recentSales) {
+    const total = recentSales.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const monthCount = recentSales.length;
+    const average = monthCount > 0 ? total / monthCount : 0;
+
+    return {
+        total,
+        monthCount,
+        average,
+    };
+}
+
+function buildReorderReason({
+    currentLevel,
+    recommendedLevel,
+    forecastDemand,
+    recommendation,
+    recentSalesStats,
+}) {
+    const current = Number(currentLevel || 0);
+    const recommended = Number(recommendedLevel || 0);
+    const demand = Number(forecastDemand || 0);
+    const monthCount = Number(recentSalesStats?.monthCount || 0);
+    const total = Number(recentSalesStats?.total || 0);
+    const average = Number(recentSalesStats?.average || 0);
+    const salesSummary =
+        monthCount > 0
+            ? ` Recent sales show ${total} units sold across the last ${monthCount} recorded month${monthCount === 1 ? "" : "s"}, averaging ${formatCompactNumber(average)} units per month.`
+            : " Recent monthly sales history is not available for this product.";
+
+    if (recommendation === "Decrease Reorder Level") {
+        return `Decrease is recommended because the forecasted monthly demand is ${demand} units, which is lower than the current reorder level of ${current} units. The suggested level of ${recommended} units keeps a small safety buffer while reducing excess inventory risk.${salesSummary}`;
+    }
+
+    if (recommendation === "Increase Reorder Level") {
+        return `Increase is recommended because the forecasted monthly demand is ${demand} units, which is higher than the current reorder level of ${current} units. The suggested level of ${recommended} units adds safety stock for expected demand.${salesSummary}`;
+    }
+
+    if (demand > 0) {
+        return `The current reorder level is aligned with the forecasted monthly demand of ${demand} units, so no change is recommended.${salesSummary}`;
+    }
+
+    return `No forecast demand is currently available, so the current reorder level is maintained.${salesSummary}`;
+}
+
+function formatCompactNumber(value) {
+    const number = Number(value || 0);
+    return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+
+function formatMonthLabel(value) {
+    if (!value) return "-";
+    const date = new Date(`${value}-01T00:00:00`);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString(undefined, { month: "short", year: "numeric" });
 }
 
 function totalTransferQuantity(items) {

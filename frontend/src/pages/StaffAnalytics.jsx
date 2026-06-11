@@ -298,6 +298,10 @@ export default function StaffAnalytics() {
           from_branch_id: Number(sourceBranchId),
           to_branch_id: Number(user.branch_id),
           requested_by: Number(user.user_id),
+          items: [{
+            product_id: Number(selectedRequestItem.product_id),
+            quantity: Number(requestQuantity),
+          }],
         }),
       });
 
@@ -305,26 +309,6 @@ export default function StaffAnalytics() {
 
       if (!transferRes.ok) {
         throw new Error(transferData.message || "Failed to create transfer request.");
-      }
-
-      const itemRes = await fetch(
-        `${API_BASE}/stock-transfer/${transferData.transfer_id}/add-item`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            product_id: Number(selectedRequestItem.product_id),
-            quantity: Number(requestQuantity),
-          }),
-        }
-      );
-
-      const itemData = await itemRes.json();
-
-      if (!itemRes.ok) {
-        throw new Error(itemData.message || "Failed to add transfer item.");
       }
 
       setShowRequestModal(false);

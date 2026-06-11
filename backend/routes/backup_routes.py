@@ -49,6 +49,34 @@ def _pg_dump_command():
     return "pg_dump"
 
 
+def _psql_command():
+    configured_path = os.getenv("PSQL_PATH")
+    if configured_path:
+        return configured_path
+
+    path_command = shutil.which("psql")
+    if path_command:
+        return path_command
+
+    if os.name == "nt":
+        program_files = [
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+        ]
+        for root in [item for item in program_files if item]:
+            postgres_root = os.path.join(root, "PostgreSQL")
+            if not os.path.isdir(postgres_root):
+                continue
+
+            versions = sorted(os.listdir(postgres_root), reverse=True)
+            for version in versions:
+                candidate = os.path.join(postgres_root, version, "bin", "psql.exe")
+                if os.path.isfile(candidate):
+                    return candidate
+
+    return "psql"
+
+
 def _requester_id():
     data = request.get_json(silent=True) or {}
     return (
@@ -149,6 +177,83 @@ def _list_backups():
     return [_backup_metadata(filename, index + 1) for index, filename in enumerate(files)]
 
 
+def _database_env():
+    env = os.environ.copy()
+    if Config.DB_PASSWORD:
+        env["PGPASSWORD"] = Config.DB_PASSWORD
+    return env
+
+
+def _pg_connection_args(database=None):
+    return [
+        "-h",
+        Config.DB_HOST,
+        "-p",
+        str(Config.DB_PORT),
+        "-U",
+        Config.DB_USER,
+        "-d",
+        database or Config.DB_NAME,
+    ]
+
+
+def _verify_backup_file(filename):
+    file_path = _safe_backup_path(filename)
+    if not file_path:
+        return None, "Invalid backup filename"
+    if not os.path.exists(file_path):
+        return None, "Backup file not found"
+    if os.path.getsize(file_path) <= 0:
+        return None, "Backup file is empty"
+
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
+            sample = file.read(65536)
+    except OSError as e:
+        return None, f"Backup file cannot be read: {e}"
+
+    required_markers = (
+        "PostgreSQL database dump",
+        "Dumped from database version",
+        "CREATE TABLE",
+        "COPY ",
+    )
+    if not any(marker in sample for marker in required_markers):
+        return None, "Backup file does not look like a PostgreSQL SQL backup"
+
+    return file_path, None
+
+
+def _create_backup_file(prefix=None):
+    _ensure_backup_dir()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{Config.DB_NAME}_{prefix or 'backup'}_{timestamp}.sql"
+    file_path = os.path.join(BACKUP_DIR, filename)
+
+    command = [
+        _pg_dump_command(),
+        *_pg_connection_args(),
+        "--format=plain",
+        "--no-owner",
+        "-f",
+        file_path,
+    ]
+
+    started_at = time.perf_counter()
+    result = subprocess.run(command, capture_output=True, text=True, env=_database_env(), timeout=300)
+    duration_seconds = round(time.perf_counter() - started_at, 2)
+
+    if result.returncode != 0:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise RuntimeError(result.stderr.strip() or "Backup failed")
+
+    with open(_metadata_path(filename), "w", encoding="utf-8") as file:
+        json.dump({"duration_seconds": duration_seconds}, file)
+
+    return filename, duration_seconds
+
+
 @backup_bp.route("/admin/backups", methods=["GET"])
 def get_backups():
     _, error = _require_system_admin()
@@ -171,43 +276,9 @@ def create_backup():
         return error
 
     _ensure_backup_dir()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{Config.DB_NAME}_backup_{timestamp}.sql"
-    file_path = os.path.join(BACKUP_DIR, filename)
 
-    command = [
-        _pg_dump_command(),
-        "-h",
-        Config.DB_HOST,
-        "-p",
-        str(Config.DB_PORT),
-        "-U",
-        Config.DB_USER,
-        "-d",
-        Config.DB_NAME,
-        "--format=plain",
-        "--no-owner",
-        "-f",
-        file_path,
-    ]
-
-    env = os.environ.copy()
-    if Config.DB_PASSWORD:
-        env["PGPASSWORD"] = Config.DB_PASSWORD
-
-    started_at = time.perf_counter()
     try:
-        result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=300)
-        duration_seconds = round(time.perf_counter() - started_at, 2)
-
-        if result.returncode != 0:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return jsonify({"message": result.stderr.strip() or "Backup failed"}), 500
-
-        with open(_metadata_path(filename), "w", encoding="utf-8") as file:
-            json.dump({"duration_seconds": duration_seconds}, file)
-
+        filename, duration_seconds = _create_backup_file("backup")
         metadata = _backup_metadata(filename, 1)
         log_audit(
             user_id,
@@ -220,13 +291,122 @@ def create_backup():
     except FileNotFoundError:
         return jsonify({"message": "pg_dump command was not found. Install PostgreSQL client tools or set PG_DUMP_PATH in backend/.env."}), 500
     except subprocess.TimeoutExpired:
-        if os.path.exists(file_path):
-            os.remove(file_path)
         return jsonify({"message": "Backup timed out before completion"}), 500
     except Exception as e:
         print("ERROR /admin/backups/create POST:", e)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        return jsonify({"message": str(e)}), 500
+
+
+@backup_bp.route("/admin/backups/verify", methods=["POST"])
+def verify_backup():
+    user_id, error = _require_system_admin()
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    filename = data.get("filename")
+    file_path, verify_error = _verify_backup_file(filename)
+    if verify_error:
+        return jsonify({"message": verify_error}), 400
+
+    try:
+        metadata = _backup_metadata(filename, 1)
+        log_audit(
+            user_id,
+            "VERIFY",
+            "Database Backup",
+            None,
+            f"Verified database backup file {filename}.",
+        )
+        return jsonify({
+            "message": "Backup verified successfully",
+            "backup": metadata,
+            "file_path": os.path.basename(file_path),
+        }), 200
+    except Exception as e:
+        print("ERROR /admin/backups/verify POST:", e)
+        return jsonify({"message": str(e)}), 500
+
+
+@backup_bp.route("/admin/backups/restore", methods=["POST"])
+def restore_backup():
+    user_id, error = _require_system_admin()
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    filename = data.get("filename")
+    confirm = data.get("confirm")
+    if confirm != "RESTORE":
+        return jsonify({"message": "Restore confirmation is required"}), 400
+
+    file_path, verify_error = _verify_backup_file(filename)
+    if verify_error:
+        return jsonify({"message": verify_error}), 400
+
+    try:
+        safety_filename, _ = _create_backup_file("pre_restore")
+
+        reset_command = [
+            _psql_command(),
+            *_pg_connection_args(),
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;",
+        ]
+        reset_result = subprocess.run(
+            reset_command,
+            capture_output=True,
+            text=True,
+            env=_database_env(),
+            timeout=300,
+        )
+        if reset_result.returncode != 0:
+            return jsonify({"message": reset_result.stderr.strip() or "Database reset failed"}), 500
+
+        restore_command = [
+            _psql_command(),
+            *_pg_connection_args(),
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-f",
+            file_path,
+        ]
+        started_at = time.perf_counter()
+        restore_result = subprocess.run(
+            restore_command,
+            capture_output=True,
+            text=True,
+            env=_database_env(),
+            timeout=600,
+        )
+        duration_seconds = round(time.perf_counter() - started_at, 2)
+        if restore_result.returncode != 0:
+            return jsonify({
+                "message": restore_result.stderr.strip() or "Database restore failed",
+                "safety_backup": safety_filename,
+            }), 500
+
+        log_audit(
+            user_id,
+            "RESTORE",
+            "Database Backup",
+            None,
+            f"Restored database from backup file {filename}. Safety backup: {safety_filename}.",
+        )
+        return jsonify({
+            "message": "Database restored successfully",
+            "restored_backup": filename,
+            "safety_backup": safety_filename,
+            "duration_seconds": duration_seconds,
+        }), 200
+    except FileNotFoundError:
+        return jsonify({"message": "PostgreSQL client command was not found. Install PostgreSQL client tools or set PG_DUMP_PATH and PSQL_PATH in backend/.env."}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"message": "Database restore timed out before completion"}), 500
+    except Exception as e:
+        print("ERROR /admin/backups/restore POST:", e)
         return jsonify({"message": str(e)}), 500
 
 

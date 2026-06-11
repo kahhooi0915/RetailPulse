@@ -1,5 +1,5 @@
 import DashboardLayout from "../layouts/DashboardLayout";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     BarChart3,
@@ -76,55 +76,50 @@ export default function AdminReportsForecasting() {
         }
     };
 
-    const topForecastProduct = forecastData[0] || null;
+    const forecastResults = useMemo(() => {
+        return sortForecastResultsByDemand(forecastData);
+    }, [forecastData]);
+
+    const topForecastProduct = forecastResults[0] || null;
 
     const totalForecastQuantity = useMemo(() => {
-        return forecastData.reduce(
+        return forecastResults.reduce(
             (sum, item) => sum + Number(item.forecast_quantity || 0),
             0
         );
-    }, [forecastData]);
+    }, [forecastResults]);
 
     const totalHistoricalQuantity = useMemo(() => {
-        return forecastData.reduce(
-            (sum, item) => sum + Number(item.total_quantity || 0),
+        return forecastResults.reduce(
+            (sum, item) => sum + getTotalQuantitySold(item),
             0
         );
-    }, [forecastData]);
+    }, [forecastResults]);
 
     const averageMae = useMemo(() => {
-        const values = forecastData
+        const values = forecastResults
             .map((item) => Number(item.mae))
             .filter((value) => !Number.isNaN(value));
 
         if (values.length === 0) return null;
         return values.reduce((sum, value) => sum + value, 0) / values.length;
-    }, [forecastData]);
+    }, [forecastResults]);
 
     const averageRmse = useMemo(() => {
-        const values = forecastData
+        const values = forecastResults
             .map((item) => Number(item.rmse))
             .filter((value) => !Number.isNaN(value));
 
         if (values.length === 0) return null;
         return values.reduce((sum, value) => sum + value, 0) / values.length;
-    }, [forecastData]);
+    }, [forecastResults]);
 
     const forecastGrowth = useMemo(() => {
-        if (!totalHistoricalQuantity) return 0;
-
-        return (
-            ((totalForecastQuantity - totalHistoricalQuantity) /
-                totalHistoricalQuantity) *
-            100
-        );
+        return calculateForecastGrowth(totalForecastQuantity, totalHistoricalQuantity);
     }, [totalForecastQuantity, totalHistoricalQuantity]);
 
     const confidenceScore = useMemo(() => {
-        if (!averageRmse || !totalForecastQuantity) return null;
-
-        const score = 100 - (averageRmse / Math.max(totalForecastQuantity, 1)) * 100;
-        return Math.max(0, Math.min(100, score));
+        return calculateForecastConfidence(averageRmse, totalForecastQuantity);
     }, [averageRmse, totalForecastQuantity]);
 
     const selectedModelSummary = topForecastProduct?.selected_model || "No Data";
@@ -141,17 +136,17 @@ export default function AdminReportsForecasting() {
     }, [generatedDate]);
 
     const slowMovingProducts = useMemo(() => {
-        return [...forecastData]
-            .filter((item) => Number(item.total_quantity || 0) <= 5)
-            .sort((a, b) => Number(a.total_quantity || 0) - Number(b.total_quantity || 0))
+        return [...forecastResults]
+            .filter((item) => getTotalQuantitySold(item) <= 5)
+            .sort((a, b) => getTotalQuantitySold(a) - getTotalQuantitySold(b))
             .slice(0, 5);
-    }, [forecastData]);
+    }, [forecastResults]);
 
-    const topSellingProducts = useMemo(() => {
-        return [...forecastData]
-            .sort((a, b) => Number(b.total_quantity || 0) - Number(a.total_quantity || 0))
+    const historicalTopSellingProducts = useMemo(() => {
+        return [...forecastResults]
+            .sort(compareHistoricalSalesPerformance)
             .slice(0, 5);
-    }, [forecastData]);
+    }, [forecastResults]);
 
     const lowStockItems = useMemo(() => {
         return inventory.filter((item) => {
@@ -167,38 +162,24 @@ export default function AdminReportsForecasting() {
         window.print();
     };
 
-    const handleExportCsv = () => {
-        const headers = [
-            "Product Name",
-            "Forecast Quantity",
-            "Historical Revenue",
-            "Selected Forecasting Approach",
-            "MAE",
-            "RMSE",
-            "Forecast Growth",
-            "Generated Date",
-        ];
-
-        const rows = forecastData.map((item) => [
-            item.product_name || "-",
-            item.forecast_quantity ?? 0,
-            formatCurrency(item.total_revenue || 0),
-            item.selected_model || "-",
-            item.mae ?? "-",
-            item.rmse ?? "-",
-            `${forecastGrowth.toFixed(1)}%`,
+    const handleExportExcel = () => {
+        const workbookXml = buildForecastWorkbookXml({
+            forecastResults,
+            products,
+            inventory,
             generatedDateTime,
-        ]);
-
-        const csv = [headers, ...rows]
-            .map((row) => row.map(formatCsvValue).join(","))
-            .join("\n");
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            totalForecastQuantity,
+            forecastGrowth,
+            confidenceScore,
+        });
+        const blob = new Blob([workbookXml], {
+            type: "application/vnd.ms-excel;charset=utf-8;",
+        });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
 
         link.href = url;
-        link.download = `RetailPulse_Forecast_Report_${generatedDateForFile}.csv`;
+        link.download = `RetailPulse_Forecast_Report_${generatedDateForFile}.xls`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -322,8 +303,8 @@ export default function AdminReportsForecasting() {
                                     />
                                     <ReportActionButton
                                         icon={FileSpreadsheet}
-                                        label="Export CSV"
-                                        onClick={handleExportCsv}
+                                        label="Export Excel"
+                                        onClick={handleExportExcel}
                                     />
                                     <ReportActionButton
                                         icon={FileDown}
@@ -381,7 +362,7 @@ export default function AdminReportsForecasting() {
                                             />
 
                                             <HeroMetric
-                                                label="Selected Forecasting Approach"
+                                                label="Top Seller Forecast Method"
                                                 value={selectedModelSummary}
                                             />
                                         </div>
@@ -418,7 +399,6 @@ export default function AdminReportsForecasting() {
                                                 className={`mt-2 text-2xl font-extrabold ${forecastGrowth >= 0 ? "text-emerald-200" : "text-red-200"
                                                     }`}
                                             >
-                                                {forecastGrowth >= 0 ? "+" : ""}
                                                 {forecastGrowth.toFixed(1)}%
                                             </p>
                                         </div>
@@ -442,7 +422,7 @@ export default function AdminReportsForecasting() {
                                 />
 
                                 <SummaryCard
-                                    title="Selected Forecasting Approach"
+                                    title="Top Seller Forecast Method"
                                     value={topForecastProduct?.selected_model || "No Data"}
                                     icon={Bot}
                                     color="text-purple-600"
@@ -501,9 +481,9 @@ export default function AdminReportsForecasting() {
                                     </div>
 
                                     <div className="mt-6 space-y-4">
-                                        {forecastData.slice(0, 8).map((item) => {
+                                        {forecastResults.slice(0, 8).map((item) => {
                                             const maxForecast = Math.max(
-                                                ...forecastData.map((p) => Number(p.forecast_quantity || 0)),
+                                                ...forecastResults.map((p) => Number(p.forecast_quantity || 0)),
                                                 1
                                             );
                                             const width = `${(Number(item.forecast_quantity || 0) / maxForecast) * 100}%`;
@@ -538,7 +518,7 @@ export default function AdminReportsForecasting() {
                                             );
                                         })}
 
-                                        {forecastData.length === 0 && (
+                                        {forecastResults.length === 0 && (
                                             <EmptyBox text="No forecast data available. Check sales history and backend API." />
                                         )}
                                     </div>
@@ -561,7 +541,7 @@ export default function AdminReportsForecasting() {
                                         </p>
 
                                         <p className="mt-3 text-sm leading-6 text-[#6f85a3]">
-                                            Selected Forecasting Approach:{" "}
+                                            Top Seller Forecast Method:{" "}
                                             <span className="font-bold text-[#1e4db7]">
                                                 {topForecastProduct?.selected_model || "-"}
                                             </span>
@@ -584,8 +564,16 @@ export default function AdminReportsForecasting() {
                             </section>
 
                             <section className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-                                <ForecastTable title="Top Selling Products" data={topSellingProducts} />
-                                <ForecastTable title="Slow Moving Products" data={slowMovingProducts} />
+                                <ForecastTable
+                                    title="Historical Sales Performance"
+                                    data={historicalTopSellingProducts}
+                                    metric="historicalRevenue"
+                                />
+                                <ForecastTable
+                                    title="Slow Moving Products"
+                                    data={slowMovingProducts}
+                                    tooltip="Products with low sales activity during the last 30 days. These products may require promotional actions, stock redistribution, or reduced future purchasing to avoid excess inventory."
+                                />
                             </section>
                         </div>
                     </>
@@ -643,7 +631,7 @@ export default function AdminReportsForecasting() {
                                         value={topForecastProduct?.forecast_quantity || 0}
                                     />
                                     <DrawerMetric
-                                        label="Selected Forecasting Approach"
+                                        label="Top Seller Forecast Method"
                                         value={topForecastProduct?.selected_model || "-"}
                                     />
                                     <DrawerMetric
@@ -725,12 +713,12 @@ export default function AdminReportsForecasting() {
                                         </thead>
 
                                         <tbody>
-                                            {forecastData.map((item) => (
+                                            {forecastResults.map((item) => (
                                                 <tr key={item.product_id} className="border-t">
                                                     <td className="px-4 py-4 font-bold text-[#17325c]">
                                                         {item.product_name}
                                                     </td>
-                                                    <td className="px-4 py-4">{item.total_quantity}</td>
+                                                    <td className="px-4 py-4">{getTotalQuantitySold(item)}</td>
                                                     <td className="px-4 py-4 font-bold text-[#1e4db7]">
                                                         {item.forecast_quantity}
                                                     </td>
@@ -822,6 +810,458 @@ function ReportActionButton({ icon: Icon, label, onClick, disabled = false, prim
     );
 }
 
+function buildForecastWorkbookXml({
+    forecastResults,
+    products,
+    inventory,
+    generatedDateTime,
+    totalForecastQuantity,
+    forecastGrowth,
+    confidenceScore,
+}) {
+    const totalProducts = forecastResults.length;
+    const totalHistoricalSales = forecastResults.reduce(
+        (sum, item) => sum + getTotalSalesRevenue(item),
+        0
+    );
+    const averageForecastQuantity = totalProducts
+        ? totalForecastQuantity / totalProducts
+        : 0;
+    const inventoryRecommendations = buildInventoryRecommendationRows(
+        forecastResults,
+        products,
+        inventory
+    );
+    const productsRequiringReorder = inventoryRecommendations.filter(
+        (item) => item.recommendation !== "Sufficient Stock"
+    ).length;
+    const methodSummary = buildForecastMethodSummary(forecastResults);
+
+    const forecastResultsRows = [
+        headerRow([
+            "Product Name",
+            "Historical Sales (RM)",
+            "Forecast Quantity",
+            "Selected Forecast Method",
+            "MAE",
+            "RMSE",
+            "Forecast Growth (%)",
+        ]),
+        ...forecastResults.map((item) => [
+            textCell(item.product_name || "-"),
+            numberCell(getTotalSalesRevenue(item), "Currency"),
+            numberCell(item.forecast_quantity || 0),
+            textCell(item.selected_model || "-"),
+            nullableNumberCell(item.mae),
+            nullableNumberCell(item.rmse),
+            numberCell(getProductForecastGrowth(item) / 100, "Percent"),
+        ]),
+    ];
+
+    const inventoryRows = [
+        headerRow([
+            "Product Name",
+            "Current Stock",
+            "Reorder Level",
+            "Forecast Demand",
+            "Recommendation",
+        ]),
+        ...inventoryRecommendations.map((item) => [
+            textCell(item.productName),
+            numberCell(item.currentStock),
+            numberCell(item.reorderLevel),
+            numberCell(item.forecastDemand),
+            textCell(item.recommendation, getRecommendationStyle(item.recommendation)),
+        ]),
+    ];
+
+    const historicalSalesRows = [
+        [
+            textCell("Historical Sales Performance", "Title", {
+                mergeAcross: 3,
+            }),
+        ],
+        [
+            textCell(
+                "Products are ranked by total quantity sold. Total sales revenue is shown for business comparison.",
+                "Note",
+                { mergeAcross: 3 }
+            ),
+        ],
+        headerRow([
+            "Rank",
+            "Product Name",
+            "Total Quantity Sold",
+            "Total Sales Revenue (RM)",
+        ]),
+        ...[...forecastResults]
+            .sort(compareHistoricalSalesPerformance)
+            .map((item, index) => [
+                numberCell(index + 1),
+                textCell(item.product_name || "-"),
+                numberCell(getTotalQuantitySold(item)),
+                numberCell(getTotalSalesRevenue(item), "Currency"),
+            ]),
+    ];
+
+    const modelPerformanceRows = [
+        headerRow(["Product Name", "Selected Forecast Method", "MAE", "RMSE"]),
+        ...forecastResults.map((item) => [
+            textCell(item.product_name || "-"),
+            textCell(item.selected_model || "-"),
+            nullableNumberCell(item.mae),
+            nullableNumberCell(item.rmse),
+        ]),
+    ];
+
+    const summaryRows = [
+        [
+            textCell("RetailPulse Forecast Report", "Title", {
+                mergeAcross: 3,
+            }),
+        ],
+        [textCell("Generated Date and Time", "SummaryLabel"), textCell(generatedDateTime)],
+        [textCell("Total Products Analysed", "SummaryLabel"), numberCell(totalProducts)],
+        [
+            textCell("Total Historical Sales (RM)", "SummaryLabel"),
+            numberCell(totalHistoricalSales, "Currency"),
+        ],
+        [
+            textCell("Total Forecast Units", "SummaryLabel"),
+            numberCell(totalForecastQuantity),
+        ],
+        [
+            textCell("Average Forecast Quantity", "SummaryLabel"),
+            numberCell(averageForecastQuantity),
+        ],
+        [
+            textCell("Products Requiring Reorder", "SummaryLabel"),
+            numberCell(productsRequiringReorder),
+        ],
+        [
+            textCell("Most Frequently Selected Method", "SummaryLabel"),
+            textCell(methodSummary.bestMethod),
+        ],
+        [textCell("Method Summary", "SummaryLabel"), textCell(methodSummary.description)],
+        [
+            textCell("Overall Forecast Growth", "SummaryLabel"),
+            numberCell(forecastGrowth / 100, "Percent"),
+        ],
+        [
+            textCell("Forecast Confidence", "SummaryLabel"),
+            confidenceScore === null
+                ? textCell("-")
+                : numberCell(confidenceScore / 100, "Percent"),
+        ],
+    ];
+
+    const worksheets = [
+        buildWorksheet("Executive Summary", summaryRows),
+        buildWorksheet("Forecast Results", forecastResultsRows, { freezeHeader: true }),
+        buildWorksheet("Inventory Recommendations", inventoryRows, {
+            freezeHeader: true,
+        }),
+        buildWorksheet("Historical Sales Performance", historicalSalesRows, {
+            freezeRows: 3,
+        }),
+        buildWorksheet("Model Performance", modelPerformanceRows, { freezeHeader: true }),
+    ];
+
+    return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+${buildWorkbookStyles()}
+${worksheets.join("\n")}
+</Workbook>`;
+}
+
+function buildForecastMethodSummary(forecastResults) {
+    const counts = forecastResults.reduce(
+        (totals, item) => {
+            const method = String(item.selected_model || "").toLowerCase();
+
+            if (method.includes("linear")) totals.linearRegression += 1;
+            if (method.includes("prophet")) totals.prophet += 1;
+
+            return totals;
+        },
+        { linearRegression: 0, prophet: 0 }
+    );
+
+    let bestMethod = "No Data";
+
+    if (counts.linearRegression > counts.prophet) {
+        bestMethod = "Linear Regression";
+    } else if (counts.prophet > counts.linearRegression) {
+        bestMethod = "Prophet";
+    } else if (counts.linearRegression || counts.prophet) {
+        bestMethod = "Tie";
+    }
+
+    return {
+        bestMethod,
+        description: `Linear Regression selected for ${counts.linearRegression} product(s); Prophet selected for ${counts.prophet} product(s).`,
+    };
+}
+
+function buildInventoryRecommendationRows(forecastResults, products, inventory) {
+    const productById = new Map(
+        products.map((product) => [Number(product.product_id), product])
+    );
+    const stockByProductId = inventory.reduce((totals, item) => {
+        const productId = Number(item.product_id);
+        const current = totals.get(productId) || 0;
+
+        totals.set(productId, current + Number(item.quantity_in_stock || 0));
+        return totals;
+    }, new Map());
+
+    return forecastResults.map((item) => {
+        const productId = Number(item.product_id);
+        const product = productById.get(productId);
+        const currentStock = stockByProductId.get(productId) || 0;
+        const reorderLevel = Number(product?.reorder_level ?? item.reorder_level ?? 10);
+        const forecastDemand = Number(item.forecast_quantity || 0);
+        let recommendation = "Sufficient Stock";
+
+        if (currentStock <= reorderLevel) {
+            recommendation = "Urgent Reorder";
+        } else if (currentStock <= forecastDemand) {
+            recommendation = "Reorder Soon";
+        }
+
+        return {
+            productName: item.product_name || product?.product_name || "-",
+            currentStock,
+            reorderLevel,
+            forecastDemand,
+            recommendation,
+        };
+    });
+}
+
+function getProductForecastGrowth(item) {
+    return calculateForecastGrowth(item.forecast_quantity, getTotalQuantitySold(item));
+}
+
+function sortForecastResultsByDemand(forecastResults) {
+    return [...forecastResults].sort(
+        (a, b) => Number(b.forecast_quantity || 0) - Number(a.forecast_quantity || 0)
+    );
+}
+
+function compareHistoricalSalesPerformance(a, b) {
+    const quantityDifference = getTotalQuantitySold(b) - getTotalQuantitySold(a);
+
+    if (quantityDifference !== 0) return quantityDifference;
+    return getTotalSalesRevenue(b) - getTotalSalesRevenue(a);
+}
+
+function getTotalQuantitySold(item) {
+    return Number(item.total_quantity_sold ?? item.total_quantity ?? 0);
+}
+
+function getTotalSalesRevenue(item) {
+    return Number(item.total_sales_revenue ?? item.total_revenue ?? 0);
+}
+
+function calculateForecastGrowth(forecastQuantity, historicalQuantity) {
+    const historicalValue = Number(historicalQuantity || 0);
+
+    if (!historicalValue) return 0;
+    return ((Number(forecastQuantity || 0) - historicalValue) / historicalValue) * 100;
+}
+
+function calculateForecastConfidence(averageRmse, totalForecastQuantity) {
+    if (!averageRmse || !totalForecastQuantity) return null;
+
+    const score =
+        100 - (Number(averageRmse) / Math.max(Number(totalForecastQuantity), 1)) * 100;
+    return Math.max(0, Math.min(100, score));
+}
+
+function buildWorksheet(name, rows, options = {}) {
+    const columnCount = Math.max(
+        ...rows.map((row) =>
+            row.reduce((count, cell) => count + 1 + Number(cell.mergeAcross || 0), 0)
+        ),
+        1
+    );
+    const widths = getColumnWidths(rows, columnCount);
+
+    return `<Worksheet ss:Name="${xmlEscape(name)}">
+<Table>
+${widths.map((width) => `<Column ss:AutoFitWidth="0" ss:Width="${width}"/>`).join("\n")}
+${rows.map(buildRowXml).join("\n")}
+</Table>
+${options.freezeHeader || options.freezeRows ? buildFrozenHeaderOptions(options.freezeRows || 1) : ""}
+</Worksheet>`;
+}
+
+function buildWorkbookStyles() {
+    return `<Styles>
+<Style ss:ID="Default" ss:Name="Normal">
+<Alignment ss:Vertical="Center"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Color="#17325C"/>
+</Style>
+<Style ss:ID="Title">
+<Alignment ss:Vertical="Center"/>
+<Font ss:FontName="Calibri" ss:Size="18" ss:Bold="1" ss:Color="#FFFFFF"/>
+<Interior ss:Color="#0C2F73" ss:Pattern="Solid"/>
+</Style>
+<Style ss:ID="Header">
+<Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+<Interior ss:Color="#1E4DB7" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#B7CBE8")}</Borders>
+</Style>
+<Style ss:ID="SummaryLabel">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#07102F"/>
+<Interior ss:Color="#EEF6FB" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#D9E8F7")}</Borders>
+</Style>
+<Style ss:ID="Note">
+<Alignment ss:Vertical="Center" ss:WrapText="1"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Italic="1" ss:Color="#475569"/>
+<Interior ss:Color="#F8FCFF" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#D9E8F7")}</Borders>
+</Style>
+<Style ss:ID="Currency">
+<NumberFormat ss:Format="&quot;RM&quot; #,##0.00"/>
+<Borders>${buildBorderXml("#E3ECF7")}</Borders>
+</Style>
+<Style ss:ID="Percent">
+<NumberFormat ss:Format="0.0%"/>
+<Borders>${buildBorderXml("#E3ECF7")}</Borders>
+</Style>
+<Style ss:ID="Urgent">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#991B1B"/>
+<Interior ss:Color="#FEE2E2" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#FCA5A5")}</Borders>
+</Style>
+<Style ss:ID="Soon">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#9A3412"/>
+<Interior ss:Color="#FFEDD5" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#FDBA74")}</Borders>
+</Style>
+<Style ss:ID="Sufficient">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#166534"/>
+<Interior ss:Color="#DCFCE7" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#86EFAC")}</Borders>
+</Style>
+<Style ss:ID="Cell">
+<Borders>${buildBorderXml("#E3ECF7")}</Borders>
+</Style>
+</Styles>`;
+}
+
+function buildFrozenHeaderOptions(rowCount = 1) {
+    return `<WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+<FreezePanes/>
+<FrozenNoSplit/>
+<SplitHorizontal>${rowCount}</SplitHorizontal>
+<TopRowBottomPane>${rowCount}</TopRowBottomPane>
+<ActivePane>2</ActivePane>
+</WorksheetOptions>`;
+}
+
+function buildBorderXml(color) {
+    return `<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>`;
+}
+
+function getColumnWidths(rows, columnCount) {
+    const widths = Array.from({ length: columnCount }, () => 80);
+
+    rows.forEach((row) => {
+        let columnIndex = 0;
+
+        row.forEach((cell) => {
+            const span = 1 + Number(cell.mergeAcross || 0);
+            const textLength = String(cell.value ?? "").length;
+            const calculatedWidth = Math.min(Math.max(textLength * 7 + 20, 80), 260);
+
+            widths[columnIndex] = Math.max(widths[columnIndex], calculatedWidth);
+            columnIndex += span;
+        });
+    });
+
+    return widths.map((width) => Math.round(width));
+}
+
+function buildRowXml(row, rowIndex) {
+    const height = rowIndex === 0 ? 28 : 22;
+
+    return `<Row ss:Height="${height}">
+${row.map(buildCellXml).join("\n")}
+</Row>`;
+}
+
+function buildCellXml(cell) {
+    const attributes = [
+        `ss:StyleID="${cell.style || "Cell"}"`,
+        cell.mergeAcross ? `ss:MergeAcross="${cell.mergeAcross}"` : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    return `<Cell ${attributes}><Data ss:Type="${cell.type}">${xmlEscape(
+        cell.value
+    )}</Data></Cell>`;
+}
+
+function headerRow(labels) {
+    return labels.map((label) => textCell(label, "Header"));
+}
+
+function textCell(value, style = "Cell", options = {}) {
+    return {
+        type: "String",
+        value: value ?? "",
+        style,
+        ...options,
+    };
+}
+
+function numberCell(value, style = "Cell") {
+    return {
+        type: "Number",
+        value: Number(value || 0).toFixed(2).replace(/\.00$/, ""),
+        style,
+    };
+}
+
+function nullableNumberCell(value) {
+    const numericValue = Number(value);
+
+    if (value === null || value === undefined || Number.isNaN(numericValue)) {
+        return textCell("-");
+    }
+
+    return numberCell(numericValue);
+}
+
+function getRecommendationStyle(recommendation) {
+    if (recommendation === "Urgent Reorder") return "Urgent";
+    if (recommendation === "Reorder Soon") return "Soon";
+    return "Sufficient";
+}
+
+function xmlEscape(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
 function SummaryCard({ title, value, icon: Icon, color }) {
     return (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -842,15 +1282,13 @@ function SummaryCard({ title, value, icon: Icon, color }) {
     );
 }
 
-function formatCsvValue(value) {
-    const text = String(value ?? "");
-    return `"${text.replace(/"/g, '""')}"`;
-}
-
-function ForecastTable({ title, data }) {
+function ForecastTable({ title, data, metric = "forecast", tooltip }) {
     return (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">{title}</h2>
+            <div className="mb-5 flex items-center gap-2">
+                <h2 className="text-xl font-extrabold text-[#07102f]">{title}</h2>
+                {tooltip && <InfoTooltip text={tooltip} ariaLabel={`About ${title}`} />}
+            </div>
 
             <div className="space-y-3">
                 {data.map((item) => (
@@ -861,12 +1299,16 @@ function ForecastTable({ title, data }) {
                         <div>
                             <p className="font-extrabold text-[#17325c]">{item.product_name}</p>
                             <p className="text-xs font-bold text-[#6f85a3]">
-                                Sold: {item.total_quantity} units
+                                {metric === "historicalRevenue"
+                                    ? `Revenue: ${formatCurrency(getTotalSalesRevenue(item))}`
+                                    : `Sold: ${getTotalQuantitySold(item)} units`}
                             </p>
                         </div>
 
                         <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-[#1e4db7]">
-                            Forecast {item.forecast_quantity}
+                            {metric === "historicalRevenue"
+                                ? "Historical"
+                                : `Forecast ${item.forecast_quantity}`}
                         </span>
                     </div>
                 ))}
@@ -874,6 +1316,47 @@ function ForecastTable({ title, data }) {
                 {data.length === 0 && <EmptyBox text="No data found." />}
             </div>
         </div>
+    );
+}
+
+function InfoTooltip({ text, ariaLabel = "More information" }) {
+    const tooltipId = useId();
+    const [isOpen, setIsOpen] = useState(false);
+
+    return (
+        <span
+            className="relative inline-flex"
+            onMouseEnter={() => setIsOpen(true)}
+            onMouseLeave={() => setIsOpen(false)}
+        >
+            <button
+                type="button"
+                aria-label={ariaLabel}
+                aria-describedby={isOpen ? tooltipId : undefined}
+                title={text}
+                onClick={() => setIsOpen(true)}
+                onFocus={() => setIsOpen(true)}
+                onBlur={() => setIsOpen(false)}
+                className="grid h-6 w-6 cursor-help place-items-center rounded-full text-[#6f85a3] transition hover:bg-[#eef6fb] hover:text-[#1e4db7] focus:outline-none focus:ring-2 focus:ring-[#1e4db7]/30"
+            >
+                <Info size={15} aria-hidden="true" />
+            </button>
+
+            <motion.span
+                id={tooltipId}
+                role="tooltip"
+                initial={false}
+                animate={{
+                    opacity: isOpen ? 1 : 0,
+                    y: isOpen ? 0 : -4,
+                    visibility: isOpen ? "visible" : "hidden",
+                }}
+                transition={{ duration: 0.16, ease: "easeOut" }}
+                className="pointer-events-none absolute right-0 top-8 z-20 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-[#d9e7f5] bg-white px-4 py-3 text-left text-xs font-semibold leading-5 text-[#17325c] shadow-xl"
+            >
+                {text}
+            </motion.span>
+        </span>
     );
 }
 
