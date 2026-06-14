@@ -477,6 +477,228 @@ def admin_warehouse_stock():
         return jsonify({"message": str(e)}), 500
 
 
+@inventory_bp.route("/admin/warehouse/distribute", methods=["POST"])
+def admin_warehouse_distribute_stock():
+    conn = None
+    cur = None
+
+    try:
+        data = request.get_json() or {}
+        from_branch_id = data.get("from_branch_id")
+        to_branch_id = data.get("to_branch_id")
+        product_id = data.get("product_id")
+        quantity = data.get("quantity")
+        approved_by = data.get("approved_by") or data.get("user_id")
+
+        if not approved_by:
+            return jsonify({"message": "Admin user is required"}), 400
+
+        if not from_branch_id or not to_branch_id or not product_id:
+            return jsonify({"message": "Warehouse, destination branch, and product are required"}), 400
+
+        distribute_to_all = str(to_branch_id).upper() == "ALL"
+
+        try:
+            from_branch_id = int(from_branch_id)
+            if not distribute_to_all:
+                to_branch_id = int(to_branch_id)
+            product_id = int(product_id)
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            return jsonify({"message": "Warehouse, branch, product, and quantity must be valid numbers"}), 400
+
+        if quantity <= 0:
+            return jsonify({"message": "Quantity must be greater than 0"}), 400
+
+        if not distribute_to_all and from_branch_id == to_branch_id:
+            return jsonify({"message": "Source warehouse and destination branch cannot be the same"}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        admin_user = _get_admin_user(cur, approved_by)
+        if not _is_active_admin(admin_user):
+            conn.rollback()
+            return jsonify({"message": "Only an active system admin can distribute warehouse stock"}), 403
+
+        cur.execute("""
+            SELECT branch_id, branch_name, branch_type
+            FROM branch
+            WHERE branch_id = %s
+        """, (from_branch_id,))
+        source_row = cur.fetchone()
+        source_branch = {"name": source_row[1], "type": source_row[2]} if source_row else None
+
+        if not source_branch or source_branch["type"] != "WAREHOUSE":
+            conn.rollback()
+            return jsonify({"message": "Source must be a warehouse"}), 400
+
+        if distribute_to_all:
+            cur.execute("""
+                SELECT branch_id, branch_name
+                FROM branch
+                WHERE branch_type = 'BRANCH'
+                ORDER BY branch_name
+            """)
+            destination_rows = cur.fetchall()
+        else:
+            cur.execute("""
+                SELECT branch_id, branch_name, branch_type
+                FROM branch
+                WHERE branch_id = %s
+            """, (to_branch_id,))
+            destination = cur.fetchone()
+            if not destination or destination[2] != "BRANCH":
+                conn.rollback()
+                return jsonify({"message": "Destination must be a branch"}), 400
+            destination_rows = [(destination[0], destination[1])]
+
+        if not destination_rows:
+            conn.rollback()
+            return jsonify({"message": "No destination branches found"}), 400
+
+        cur.execute("""
+            SELECT p.product_code, p.product_name
+            FROM product p
+            JOIN category c ON p.category_id = c.category_id
+            WHERE p.product_id = %s
+              AND p.status = 'ACTIVE'
+              AND c.status = 'ACTIVE'
+        """, (product_id,))
+        product = cur.fetchone()
+
+        if not product:
+            conn.rollback()
+            return jsonify({"message": "Active product not found"}), 404
+
+        cur.execute("""
+            SELECT quantity_in_stock
+            FROM inventory
+            WHERE product_id = %s
+              AND branch_id = %s
+            FOR UPDATE
+        """, (product_id, from_branch_id))
+        source_stock = cur.fetchone()
+
+        if not source_stock or source_stock[0] < quantity:
+            conn.rollback()
+            return jsonify({
+                "message": "Insufficient warehouse stock",
+                "available_stock": source_stock[0] if source_stock else 0,
+                "requested_quantity": quantity,
+            }), 400
+
+        total_quantity = quantity * len(destination_rows)
+        if source_stock[0] < total_quantity:
+            conn.rollback()
+            return jsonify({
+                "message": "Insufficient warehouse stock for all selected branches",
+                "available_stock": source_stock[0],
+                "requested_quantity": total_quantity,
+                "quantity_per_branch": quantity,
+                "branch_count": len(destination_rows),
+            }), 400
+
+        cur.execute("""
+            SELECT st.transfer_id, st.transfer_code, st.to_branch_id, b.branch_name
+            FROM stock_transfer st
+            JOIN transfer_detail td ON st.transfer_id = td.transfer_id
+            JOIN branch b ON st.to_branch_id = b.branch_id
+            WHERE st.from_branch_id = %s
+              AND td.product_id = %s
+              AND st.status IN ('PENDING', 'APPROVED')
+              AND st.to_branch_id = ANY(%s)
+            ORDER BY st.transfer_id
+            LIMIT 1
+        """, (from_branch_id, product_id, [row[0] for row in destination_rows]))
+        duplicate = cur.fetchone()
+
+        if duplicate:
+            conn.rollback()
+            return jsonify({
+                "message": f"A pending or approved distribution already exists for this product and {duplicate[3]}",
+                "transfer_id": duplicate[0],
+                "transfer_code": duplicate[1],
+            }), 409
+
+        source_stock_before = source_stock[0]
+        created_transfers = []
+
+        for index, (destination_branch_id, destination_branch_name) in enumerate(destination_rows):
+            transfer_source_before = source_stock_before - (quantity * index)
+            transfer_source_after = transfer_source_before - quantity
+
+            cur.execute("""
+                INSERT INTO stock_transfer (
+                    from_branch_id,
+                    to_branch_id,
+                    status,
+                    requested_by,
+                    approved_by,
+                    reject_reason,
+                    approved_at
+                )
+                VALUES (%s, %s, 'APPROVED', %s, %s, NULL, CURRENT_TIMESTAMP)
+                RETURNING transfer_id, transfer_code
+            """, (from_branch_id, destination_branch_id, approved_by, approved_by))
+            transfer = cur.fetchone()
+
+            cur.execute("""
+                INSERT INTO transfer_detail (
+                    transfer_id,
+                    product_id,
+                    quantity,
+                    source_stock_before,
+                    source_stock_after
+                )
+                VALUES (%s, %s, %s, %s, %s)
+            """, (transfer[0], product_id, quantity, transfer_source_before, transfer_source_after))
+
+            created_transfers.append({
+                "transfer_id": transfer[0],
+                "transfer_code": transfer[1],
+                "destination_branch_id": destination_branch_id,
+                "destination_branch_name": destination_branch_name,
+            })
+
+        cur.execute("""
+            UPDATE inventory
+            SET quantity_in_stock = quantity_in_stock - %s,
+                last_updated = CURRENT_TIMESTAMP
+            WHERE product_id = %s
+              AND branch_id = %s
+        """, (total_quantity, product_id, from_branch_id))
+
+        conn.commit()
+
+        log_audit(
+            approved_by,
+            "DISTRIBUTE_WAREHOUSE_STOCK",
+            "Warehouse Management",
+            created_transfers[0]["transfer_id"],
+            f"Distributed {quantity} unit(s) of {product[1]} from {source_branch['name']} to "
+            f"{len(created_transfers)} branch(es)."
+        )
+
+        return jsonify({
+            "message": "Warehouse stock distribution created successfully. Branch manager must confirm receipt.",
+            "transfer_id": created_transfers[0]["transfer_id"],
+            "transfer_code": created_transfers[0]["transfer_code"],
+            "transfers": created_transfers,
+            "source_stock_before": source_stock_before,
+            "source_stock_after": source_stock_before - total_quantity,
+        }), 201
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print("ERROR /admin/warehouse/distribute POST:", e)
+        return jsonify({"message": str(e)}), 500
+
+    finally:
+        _close(conn, cur)
+
+
 # =========================
 # ADMIN WAREHOUSE - TRANSFERS
 # =========================

@@ -40,12 +40,8 @@ def _close(conn=None, cur=None):
         conn.close()
 
 
-def _mask_secret(value):
-    if not value:
-        return "<missing>"
-    if len(value) <= 8:
-        return "<set but too short to mask safely>"
-    return f"{value[:4]}...{value[-4:]}"
+def _debug_ai_logs_enabled():
+    return os.getenv("AI_DEBUG_LOGS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _read_error_body(error):
@@ -64,9 +60,7 @@ def _log_gemini_configuration(api_key, model):
         "Gemini configuration: "
         f"model={model}, "
         f"endpoint={_get_gemini_endpoint(model)}, "
-        f"api_key_loaded={bool(api_key)}, "
-        f"api_key_length={len(api_key or '')}, "
-        f"api_key_masked={_mask_secret(api_key)}"
+        f"api_key_loaded={bool(api_key)}"
     )
 
 
@@ -74,8 +68,9 @@ def _log_gemini_http_error(error):
     body = _read_error_body(error)
     print("ERROR Gemini API HTTP status:", getattr(error, "code", "<unknown>"))
     print("ERROR Gemini API HTTP reason:", getattr(error, "reason", "<unknown>"))
-    print("ERROR Gemini API HTTP headers:", dict(getattr(error, "headers", {}) or {}))
-    print("ERROR Gemini API HTTP body:", body)
+    if _debug_ai_logs_enabled():
+        print("ERROR Gemini API HTTP headers:", dict(getattr(error, "headers", {}) or {}))
+        print("ERROR Gemini API HTTP body:", body)
     return body
 
 
@@ -354,7 +349,8 @@ def _build_data_context(intent):
             "description": forecast_summary.get("description"),
             "top_ranked_products": (forecast_summary.get("forecasts") or [])[:5],
         }
-        print("Official forecast summary sent to AI:", official_summary)
+        if _debug_ai_logs_enabled():
+            print("Official forecast summary sent to AI:", official_summary)
         return official_summary
     if intent == "poor_selling_product":
         return _fetch_poor_selling_products()
@@ -430,24 +426,26 @@ def _ask_gemini(message, intent, context):
             method="POST",
         )
 
-        print(
-            "Gemini request payload:",
-            json.dumps(
-                {
-                    "model": model,
-                    "intent": intent,
-                    "payload": payload,
-                },
-                default=str,
-            ),
-        )
+        if _debug_ai_logs_enabled():
+            print(
+                "Gemini request payload:",
+                json.dumps(
+                    {
+                        "model": model,
+                        "intent": intent,
+                        "payload": payload,
+                    },
+                    default=str,
+                ),
+            )
 
         try:
             with urllib.request.urlopen(req, timeout=20) as response:
                 response_text = response.read().decode("utf-8")
                 print("Gemini HTTP status:", getattr(response, "status", "<unknown>"))
                 print("Gemini response model attempted:", model)
-                print("Gemini response body:", response_text)
+                if _debug_ai_logs_enabled():
+                    print("Gemini response body:", response_text)
                 break
         except urllib.error.HTTPError as error:
             last_error = error
@@ -595,12 +593,11 @@ def ai_chat():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or data.get("message") or "").strip()
 
-    print("AI question received:", question)
-
     if not question:
         return jsonify({"answer": "Question is required"}), 400
 
     intent = _detect_intent(question)
+    print(f"AI question received: intent={intent}, length={len(question)}")
 
     try:
         try:

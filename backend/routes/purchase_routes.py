@@ -34,6 +34,74 @@ def find_active_purchase_for_product_branch(cur, product_id, branch_id):
     return cur.fetchone()
 
 
+def ensure_inventory_audit_function(cur):
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION public.log_inventory_update()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            actor_id integer;
+            action_text text;
+            description_text text;
+        BEGIN
+            actor_id := NULLIF(current_setting('app.current_user_id', true), '')::integer;
+
+            IF actor_id IS NULL THEN
+                actor_id := NULLIF(current_setting('app.user_id', true), '')::integer;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                actor_id := NULLIF(current_setting('retailpulse.current_user_id', true), '')::integer;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                actor_id := NULLIF(current_setting('retailpulse.user_id', true), '')::integer;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                SELECT user_id
+                INTO actor_id
+                FROM users
+                WHERE role = 'SYSTEM_ADMIN'
+                  AND status = 'ACTIVE'
+                ORDER BY user_id
+                LIMIT 1;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                SELECT user_id
+                INTO actor_id
+                FROM users
+                WHERE status = 'ACTIVE'
+                ORDER BY user_id
+                LIMIT 1;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            IF TG_OP = 'INSERT' THEN
+                action_text := 'INSERT';
+                description_text := 'Branch ' || NEW.branch_id ||
+                    ': Stock quantity set to ' || NEW.quantity_in_stock;
+            ELSE
+                action_text := 'UPDATE';
+                description_text := 'Branch ' || NEW.branch_id ||
+                    ': Stock quantity changed from ' || OLD.quantity_in_stock ||
+                    ' to ' || NEW.quantity_in_stock;
+            END IF;
+
+            INSERT INTO audit_log (user_id, action, module, record_id, description, created_at)
+            VALUES (actor_id, action_text, 'INVENTORY', NEW.product_id, description_text, CURRENT_TIMESTAMP);
+
+            RETURN NEW;
+        END;
+        $$;
+    """)
+
+
 # =========================================================
 # SUPPLIER MANAGEMENT
 # =========================================================
@@ -441,6 +509,81 @@ def get_purchases():
 
     except Exception as e:
         print("ERROR get_purchases:", e)
+        return jsonify({"message": str(e)}), 500
+
+
+@purchase_bp.route("/admin/purchases/products-not-purchased", methods=["GET"])
+def get_products_not_purchased():
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                p.product_id,
+                p.product_code,
+                p.product_name,
+                c.category_name,
+                p.selling_price,
+                supplier_offer.supplier_id,
+                supplier_offer.supplier_code,
+                supplier_offer.supplier_name,
+                supplier_offer.purchase_price,
+                supplier_offer.lead_time_days
+            FROM product p
+            JOIN category c ON p.category_id = c.category_id
+            JOIN LATERAL (
+                SELECT
+                    sp.supplier_id,
+                    s.supplier_code,
+                    s.supplier_name,
+                    sp.purchase_price,
+                    sp.lead_time_days,
+                    sp.is_preferred
+                FROM supplier_product sp
+                JOIN supplier s ON sp.supplier_id = s.supplier_id
+                WHERE sp.product_id = p.product_id
+                  AND sp.status = 'ACTIVE'
+                  AND s.status = 'ACTIVE'
+                ORDER BY sp.is_preferred DESC,
+                         sp.purchase_price ASC,
+                         s.supplier_name ASC
+                LIMIT 1
+            ) supplier_offer ON TRUE
+            WHERE p.status = 'ACTIVE'
+              AND c.status = 'ACTIVE'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM purchase_detail pd
+                  WHERE pd.product_id = p.product_id
+              )
+            ORDER BY p.product_id DESC
+            LIMIT 8
+        """)
+
+        rows = cur.fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "product_id": row[0],
+                "product_code": row[1],
+                "product_name": row[2],
+                "category_name": row[3],
+                "selling_price": float(row[4]),
+                "supplier_id": row[5],
+                "supplier_code": row[6],
+                "supplier_name": row[7],
+                "purchase_price": float(row[8]),
+                "lead_time_days": row[9],
+            })
+
+        cur.close()
+        conn.close()
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        print("ERROR get_products_not_purchased:", e)
         return jsonify({"message": str(e)}), 500
 
 
@@ -1044,6 +1187,21 @@ def mark_purchase_received(purchase_id):
             return jsonify({"message": "Only ORDERED purchases can be received"}), 400
 
         branch_id = purchase[1]
+        audit_user_id = actor_user_id or purchase[4]
+
+        if not audit_user_id:
+            conn.rollback()
+            return jsonify({"message": "Receiving user is required for audit logging"}), 400
+
+        for setting_name in (
+            "app.current_user_id",
+            "app.user_id",
+            "retailpulse.current_user_id",
+            "retailpulse.user_id",
+        ):
+            cur.execute("SELECT set_config(%s, %s, true)", (setting_name, str(audit_user_id)))
+
+        ensure_inventory_audit_function(cur)
 
         cur.execute("""
             SELECT purchase_detail_id, product_id, quantity
@@ -1096,7 +1254,7 @@ def mark_purchase_received(purchase_id):
 
         conn.commit()
         log_audit(
-            actor_user_id or purchase[4],
+            audit_user_id,
             "MARK_PURCHASE_DELIVERED",
             "Purchase Management",
             purchase_id,

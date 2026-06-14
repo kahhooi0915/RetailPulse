@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatCentsInput, formatMoneyValue } from "../utils/moneyInput";
 
 const API_BASE = "http://localhost:5000";
 
@@ -176,7 +177,7 @@ export default function AdminSupplierManagement() {
     const openEditSupplierProduct = (mapping) => {
         setEditSupplierProduct(mapping);
         setSupplierProductEditForm({
-            purchase_price: mapping.purchase_price ?? "",
+            purchase_price: formatMoneyValue(mapping.purchase_price),
             lead_time_days: mapping.lead_time_days ?? "",
             preferred_status: mapping.is_preferred ? "PREFERRED" : "NORMAL",
             status: mapping.status || "ACTIVE",
@@ -669,16 +670,17 @@ export default function AdminSupplierManagement() {
                                                                 Purchase Price
                                                             </label>
                                                             <input
-                                                                type="number"
+                                                                type="text"
+                                                                inputMode="numeric"
                                                                 value={selectedItem.purchase_price}
                                                                 onChange={(e) =>
                                                                     updateSelectedProductField(
                                                                         product.product_id,
                                                                         "purchase_price",
-                                                                        e.target.value
+                                                                        formatCentsInput(e.target.value)
                                                                     )
                                                                 }
-                                                                placeholder="5.50"
+                                                                placeholder="0.00"
                                                                 className="w-full rounded-xl bg-[#eef6fb] px-3 py-2 text-sm font-semibold outline-none"
                                                             />
                                                         </div>
@@ -784,9 +786,8 @@ export default function AdminSupplierManagement() {
                         <ReadOnlyField label="Product" value={editSupplierProduct.product_name} />
 
                         <div className="grid grid-cols-2 gap-4">
-                            <FormInput
+                            <MoneyInput
                                 label="Purchase Price"
-                                type="number"
                                 value={supplierProductEditForm.purchase_price}
                                 onChange={(value) =>
                                     setSupplierProductEditForm({
@@ -1101,6 +1102,22 @@ function FormInput({ label, value, onChange, placeholder, type = "text" }) {
         <div>
             <label className="mb-2 block text-sm font-bold text-[#17325c]">{label}</label>
             <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]" />
+        </div>
+    );
+}
+
+function MoneyInput({ label, value, onChange, placeholder }) {
+    return (
+        <div>
+            <label className="mb-2 block text-sm font-bold text-[#17325c]">{label}</label>
+            <input
+                type="text"
+                inputMode="numeric"
+                value={value}
+                onChange={(e) => onChange(formatCentsInput(e.target.value))}
+                placeholder={placeholder}
+                className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]"
+            />
         </div>
     );
 }

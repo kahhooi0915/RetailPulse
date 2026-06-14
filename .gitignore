@@ -8,6 +8,15 @@ node_modules/
 # Environment
 .env
 
+# Local database backups
+backups/
+*.sql
+*.sql.json
+
+# Archived local copies
+backend/old_backup_app.py
+frontend_old/
+
 # VS Code
 .vscode/
 

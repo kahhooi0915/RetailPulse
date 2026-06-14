@@ -3,10 +3,12 @@ import { useNavigate } from "react-router-dom";
 import {
     Bell,
     CheckCircle,
+    Download,
     Eye,
     PackageCheck,
     PackagePlus,
     Plus,
+    Printer,
     RefreshCcw,
     Settings,
     Trash2,
@@ -392,6 +394,56 @@ export default function ManagerStockTransfer() {
         }
     };
 
+    const handleDownloadHistoryExcel = () => {
+        const generatedAt = new Date();
+        const workbookXml = buildHistoryWorkbookXml({
+            branchName: user?.branch_name || "Branch",
+            managerName: user?.name || "Manager",
+            generatedAt,
+            transfers: relatedHistory,
+            transferItems,
+            getBranchName,
+        });
+        const blob = new Blob([workbookXml], {
+            type: "application/vnd.ms-excel;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = `RetailPulse_Stock_Transfer_History_${safeFilePart(user?.branch_name)}_${formatDateForFile(generatedAt)}.xls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handlePrintHistory = () => {
+        const printWindow = window.open("", "_blank", "width=1100,height=800");
+
+        if (!printWindow) {
+            alert("Unable to open print window. Please allow pop-ups and try again.");
+            return;
+        }
+
+        printWindow.document.open();
+        printWindow.document.write(buildHistoryPrintHtml({
+            branchName: user?.branch_name || "Branch",
+            managerName: user?.name || "Manager",
+            generatedAt: new Date(),
+            transfers: relatedHistory,
+            transferItems,
+            getBranchName,
+        }));
+        printWindow.document.close();
+        printWindow.focus();
+
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 250);
+    };
+
     const logout = () => {
         sessionStorage.removeItem("user");
         navigate("/");
@@ -655,13 +707,39 @@ export default function ManagerStockTransfer() {
                     </TransferSection>
 
                     <section className="rounded-2xl bg-white p-6 shadow-sm">
-                        <div className="mb-5">
-                            <h2 className="text-xl font-extrabold text-[#07102f]">
-                                Transfer History
-                            </h2>
-                            <p className="mt-1 text-sm text-[#6f85a3]">
-                                Completed or rejected transfer records related to your branch.
-                            </p>
+                        <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                            <div>
+                                <h2 className="text-xl font-extrabold text-[#07102f]">
+                                    Transfer History
+                                </h2>
+                                <p className="mt-1 text-sm text-[#6f85a3]">
+                                    Completed or rejected transfer records related to your branch.
+                                </p>
+                            </div>
+
+                            <div className="no-print flex flex-wrap gap-3">
+                                <button
+                                    type="button"
+                                    disabled={relatedHistory.length === 0}
+                                    onClick={handleDownloadHistoryExcel}
+                                    title="Download transfer history as Excel"
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#0c2f73] px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-[#103986] disabled:cursor-not-allowed disabled:bg-gray-300"
+                                >
+                                    <Download size={17} />
+                                    Excel
+                                </button>
+
+                                <button
+                                    type="button"
+                                    disabled={relatedHistory.length === 0}
+                                    onClick={handlePrintHistory}
+                                    title="Print transfer history table"
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-100 bg-white px-4 py-3 text-sm font-extrabold text-[#1e4db7] hover:bg-[#eef6fb] disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                                >
+                                    <Printer size={17} />
+                                    Print
+                                </button>
+                            </div>
                         </div>
 
                         <HistoryTable
@@ -1266,4 +1344,363 @@ function formatDateTime(value) {
         hour: "2-digit",
         minute: "2-digit",
     });
+}
+
+function buildHistoryWorkbookXml({
+    branchName,
+    managerName,
+    generatedAt,
+    transfers,
+    transferItems,
+    getBranchName,
+}) {
+    const rows = [
+        [textCell("RetailPulse Stock Transfer History", "Title", { mergeAcross: 7 })],
+        [textCell("Branch", "SummaryLabel"), textCell(branchName, "Cell", { mergeAcross: 6 })],
+        [textCell("Manager", "SummaryLabel"), textCell(managerName, "Cell", { mergeAcross: 6 })],
+        [textCell("Generated At", "SummaryLabel"), textCell(generatedAt.toLocaleString(), "Cell", { mergeAcross: 6 })],
+        [textCell("Total Records", "SummaryLabel"), numberCell(transfers.length, "Cell")],
+        [],
+        headerRow([
+            "Code",
+            "From",
+            "To",
+            "Products",
+            "Status",
+            "Requested Time",
+            "Decision Time",
+            "Reject Reason",
+        ]),
+        ...transfers.map((transfer) => {
+            const items = transferItems[transfer.transfer_id] || [];
+
+            return [
+                textCell(transfer.transfer_code || "-"),
+                textCell(getBranchName(transfer.from_branch_id)),
+                textCell(getBranchName(transfer.to_branch_id)),
+                textCell(formatTransferItems(items)),
+                textCell(getDisplayStatus(transfer.status)),
+                textCell(formatDateTime(transfer.transfer_date)),
+                textCell(formatDateTime(transfer.approved_at)),
+                textCell(transfer.status === "REJECTED" ? transfer.reject_reason || "-" : "-"),
+            ];
+        }),
+    ].filter((row) => row.length > 0);
+
+    return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+${buildWorkbookStyles()}
+${buildWorksheet("Transfer History", rows, { freezeHeader: true })}
+</Workbook>`;
+}
+
+function buildHistoryPrintHtml({
+    branchName,
+    managerName,
+    generatedAt,
+    transfers,
+    transferItems,
+    getBranchName,
+}) {
+    const rows = transfers.length
+        ? transfers.map((transfer) => {
+            const items = transferItems[transfer.transfer_id] || [];
+
+            return `<tr>
+<td>${htmlEscape(transfer.transfer_code || "-")}</td>
+<td>${htmlEscape(getBranchName(transfer.from_branch_id))}</td>
+<td>${htmlEscape(getBranchName(transfer.to_branch_id))}</td>
+<td>${htmlEscape(formatTransferItems(items))}</td>
+<td>${htmlEscape(getDisplayStatus(transfer.status))}</td>
+<td>${htmlEscape(formatDateTime(transfer.transfer_date))}</td>
+<td>${htmlEscape(formatDateTime(transfer.approved_at))}</td>
+<td>${htmlEscape(transfer.status === "REJECTED" ? transfer.reject_reason || "-" : "-")}</td>
+</tr>`;
+        }).join("")
+        : `<tr><td colspan="8" class="empty">No completed or rejected transfer history found.</td></tr>`;
+
+    return `<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Stock Transfer History</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 28px;
+            color: #111827;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #ffffff;
+        }
+
+        .report-header {
+            margin-bottom: 20px;
+            border-bottom: 2px solid #0c2f73;
+            padding-bottom: 14px;
+        }
+
+        .eyebrow {
+            margin: 0 0 6px;
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.8px;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 0;
+            color: #07102f;
+            font-size: 24px;
+        }
+
+        .meta {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px 20px;
+            margin-top: 12px;
+            color: #334155;
+            font-size: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 11px;
+        }
+
+        th,
+        td {
+            border: 1px solid #cbd5e1;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+            word-break: break-word;
+        }
+
+        th {
+            background: #eef6fb;
+            color: #17325c;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+
+        tr:nth-child(even) td {
+            background: #f8fafc;
+        }
+
+        .empty {
+            padding: 18px;
+            text-align: center;
+            color: #64748b;
+            font-weight: 700;
+        }
+
+        @page {
+            size: landscape;
+            margin: 12mm;
+        }
+
+        @media print {
+            body {
+                padding: 0;
+            }
+
+            thead {
+                display: table-header-group;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="report-header">
+        <p class="eyebrow">RetailPulse</p>
+        <h1>Stock Transfer History</h1>
+        <div class="meta">
+            <div><strong>Branch:</strong> ${htmlEscape(branchName)}</div>
+            <div><strong>Manager:</strong> ${htmlEscape(managerName)}</div>
+            <div><strong>Generated:</strong> ${htmlEscape(generatedAt.toLocaleString())}</div>
+            <div><strong>Total Records:</strong> ${transfers.length}</div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Code</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Products</th>
+                <th>Status</th>
+                <th>Requested Time</th>
+                <th>Decision Time</th>
+                <th>Reject Reason</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>
+</body>
+</html>`;
+}
+
+function buildWorksheet(name, rows, options = {}) {
+    const safeRows = rows.length ? rows : [[textCell("No transfer history found")]];
+    const columnCount = Math.max(
+        ...safeRows.map((row) =>
+            row.reduce((count, cell) => count + 1 + Number(cell.mergeAcross || 0), 0)
+        ),
+        1
+    );
+    const widths = getColumnWidths(safeRows, columnCount);
+
+    return `<Worksheet ss:Name="${xmlEscape(name)}">
+<Table>
+${widths.map((width) => `<Column ss:AutoFitWidth="0" ss:Width="${width}"/>`).join("\n")}
+${safeRows.map(buildRowXml).join("\n")}
+</Table>
+${options.freezeHeader ? buildFrozenHeaderOptions() : ""}
+</Worksheet>`;
+}
+
+function buildWorkbookStyles() {
+    return `<Styles>
+<Style ss:ID="Default" ss:Name="Normal">
+<Alignment ss:Vertical="Center"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Color="#17325C"/>
+</Style>
+<Style ss:ID="Title">
+<Alignment ss:Vertical="Center"/>
+<Font ss:FontName="Calibri" ss:Size="18" ss:Bold="1" ss:Color="#FFFFFF"/>
+<Interior ss:Color="#0C2F73" ss:Pattern="Solid"/>
+</Style>
+<Style ss:ID="Header">
+<Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+<Interior ss:Color="#1E4DB7" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#B7CBE8")}</Borders>
+</Style>
+<Style ss:ID="SummaryLabel">
+<Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#07102F"/>
+<Interior ss:Color="#EEF6FB" ss:Pattern="Solid"/>
+<Borders>${buildBorderXml("#D9E8F7")}</Borders>
+</Style>
+<Style ss:ID="Cell">
+<Alignment ss:Vertical="Center" ss:WrapText="1"/>
+<Borders>${buildBorderXml("#E3ECF7")}</Borders>
+</Style>
+</Styles>`;
+}
+
+function buildFrozenHeaderOptions() {
+    return `<WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+<FreezePanes/>
+<FrozenNoSplit/>
+<SplitHorizontal>7</SplitHorizontal>
+<TopRowBottomPane>7</TopRowBottomPane>
+<ActivePane>2</ActivePane>
+</WorksheetOptions>`;
+}
+
+function buildBorderXml(color) {
+    return `<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>`;
+}
+
+function getColumnWidths(rows, columnCount) {
+    const widths = Array.from({ length: columnCount }, () => 90);
+
+    rows.forEach((row) => {
+        let columnIndex = 0;
+
+        row.forEach((cell) => {
+            const span = 1 + Number(cell.mergeAcross || 0);
+            const textLength = String(cell.value ?? "").length;
+            const calculatedWidth = Math.min(Math.max(textLength * 7 + 22, 90), 300);
+
+            widths[columnIndex] = Math.max(widths[columnIndex], calculatedWidth);
+            columnIndex += span;
+        });
+    });
+
+    return widths.map((width) => Math.round(width));
+}
+
+function buildRowXml(row, rowIndex) {
+    const height = rowIndex === 0 ? 30 : 24;
+
+    return `<Row ss:Height="${height}">
+${row.map(buildCellXml).join("\n")}
+</Row>`;
+}
+
+function buildCellXml(cell) {
+    const attributes = [
+        `ss:StyleID="${cell.style || "Cell"}"`,
+        cell.mergeAcross ? `ss:MergeAcross="${cell.mergeAcross}"` : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    return `<Cell ${attributes}><Data ss:Type="${cell.type}">${xmlEscape(cell.value)}</Data></Cell>`;
+}
+
+function headerRow(labels) {
+    return labels.map((label) => textCell(label, "Header"));
+}
+
+function textCell(value, style = "Cell", options = {}) {
+    return {
+        type: "String",
+        value: value ?? "",
+        style,
+        ...options,
+    };
+}
+
+function numberCell(value, style = "Cell") {
+    return {
+        type: "Number",
+        value: Number(value || 0).toFixed(2).replace(/\.00$/, ""),
+        style,
+    };
+}
+
+function xmlEscape(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function htmlEscape(value) {
+    return xmlEscape(value);
+}
+
+function formatDateForFile(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}${month}${day}`;
+}
+
+function safeFilePart(value) {
+    return String(value || "Branch")
+        .trim()
+        .replace(/[^a-z0-9]+/gi, "_")
+        .replace(/^_+|_+$/g, "") || "Branch";
 }

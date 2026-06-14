@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatCentsInput, formatMoneyValue } from "../utils/moneyInput";
 
 const API_BASE = "http://localhost:5000";
 
@@ -179,14 +180,14 @@ export default function AdminCatalogManagement() {
         setProductForm({
             product_name: product.product_name || "",
             category_id: product.category_id ? String(product.category_id) : "",
-            selling_price: product.selling_price ?? "",
+            selling_price: formatMoneyValue(product.selling_price),
             reorder_level: product.reorder_level ?? "",
             status: product.status || "ACTIVE",
             description: product.description || "",
             product_image: null,
             suppliers: (product.suppliers || []).map((supplier) => ({
                 supplier_id: String(supplier.supplier_id),
-                purchase_price: supplier.purchase_price ?? "",
+                purchase_price: formatMoneyValue(supplier.purchase_price),
                 lead_time_days: supplier.lead_time_days ?? "",
             })),
         });
@@ -579,9 +580,8 @@ export default function AdminCatalogManagement() {
                         />
 
                         <div className="grid grid-cols-2 gap-4">
-                            <FormInput
+                            <MoneyInput
                                 label="Selling Price"
-                                type="number"
                                 value={productForm.selling_price}
                                 onChange={(value) =>
                                     setProductForm({ ...productForm, selling_price: value })
@@ -1016,13 +1016,16 @@ function SupplierAssignmentSection({ suppliers, assignments, onChange }) {
                                         Purchase Price
                                     </span>
                                     <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
+                                        type="text"
+                                        inputMode="numeric"
                                         value={assignment?.purchase_price ?? ""}
                                         disabled={!selected}
                                         onChange={(event) =>
-                                            onChange(supplier.supplier_id, "purchase_price", event.target.value)
+                                            onChange(
+                                                supplier.supplier_id,
+                                                "purchase_price",
+                                                formatCentsInput(event.target.value)
+                                            )
                                         }
                                         placeholder="0.00"
                                         className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb] disabled:cursor-not-allowed disabled:opacity-50"
@@ -1143,6 +1146,24 @@ function FormInput({ label, value, onChange, placeholder, type = "text" }) {
                 type={type}
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]"
+            />
+        </div>
+    );
+}
+
+function MoneyInput({ label, value, onChange, placeholder }) {
+    return (
+        <div>
+            <label className="mb-2 block text-sm font-bold text-[#17325c]">
+                {label}
+            </label>
+            <input
+                type="text"
+                inputMode="numeric"
+                value={value}
+                onChange={(e) => onChange(formatCentsInput(e.target.value))}
                 placeholder={placeholder}
                 className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]"
             />

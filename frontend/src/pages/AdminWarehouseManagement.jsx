@@ -31,6 +31,7 @@ export default function AdminWarehouseManagement() {
         purchase_needed_items: 0,
     });
     const [stock, setStock] = useState([]);
+    const [branches, setBranches] = useState([]);
     const [warehouseApprovals, setWarehouseApprovals] = useState([]);
     const [transfers, setTransfers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -47,6 +48,13 @@ export default function AdminWarehouseManagement() {
     const [rejectTransfer, setRejectTransfer] = useState(null);
     const [rejectReason, setRejectReason] = useState("");
     const [processingTransfer, setProcessingTransfer] = useState(null);
+    const [distributionItem, setDistributionItem] = useState(null);
+    const [distributionForm, setDistributionForm] = useState({
+        mode: "SINGLE",
+        to_branch_id: "",
+        quantity: "",
+    });
+    const [distributing, setDistributing] = useState(false);
     const [toast, setToast] = useState(null);
 
     const showToast = (message, type = "success") => {
@@ -72,15 +80,17 @@ export default function AdminWarehouseManagement() {
         try {
             setLoading(true);
 
-            const [summaryData, stockData, approvalData, transferData] = await Promise.all([
+            const [summaryData, stockData, branchData, approvalData, transferData] = await Promise.all([
                 fetchJson("/admin/warehouse/summary"),
                 fetchJson("/admin/warehouse/stock"),
+                fetchJson("/admin/branches"),
                 fetchJson("/admin/warehouse/transfer-approvals"),
                 fetchJson("/admin/warehouse/transfers"),
             ]);
 
             setSummary(summaryData || {});
             setStock(Array.isArray(stockData) ? stockData : []);
+            setBranches(Array.isArray(branchData) ? branchData : []);
             setWarehouseApprovals(Array.isArray(approvalData) ? approvalData : []);
             setTransfers(Array.isArray(transferData) ? transferData : []);
         } catch (err) {
@@ -179,6 +189,70 @@ export default function AdminWarehouseManagement() {
         if (item.status === "HEALTHY") return;
 
         navigate(`/admin/purchases?product_id=${item.product_id}&branch_id=${item.branch_id}`);
+    };
+
+    const branchOptions = useMemo(() => {
+        return branches.filter((branch) => branch.branch_type === "BRANCH");
+    }, [branches]);
+
+    const openDistributionModal = (item) => {
+        setDistributionItem(item);
+        setDistributionForm({
+            mode: "SINGLE",
+            to_branch_id: "",
+            quantity: "",
+        });
+    };
+
+    const submitDistribution = async () => {
+        if (!distributionItem) return;
+
+        if (distributionForm.mode !== "ALL" && !distributionForm.to_branch_id) {
+            showToast("Select a destination branch.", "error");
+            return;
+        }
+
+        const quantity = Number(distributionForm.quantity);
+        if (!quantity || quantity <= 0) {
+            showToast("Quantity must be greater than 0.", "error");
+            return;
+        }
+
+        const branchCount = distributionForm.mode === "ALL" ? branchOptions.length : 1;
+        const totalQuantity = quantity * branchCount;
+
+        if (branchCount <= 0) {
+            showToast("No branch is available for distribution.", "error");
+            return;
+        }
+
+        if (totalQuantity > Number(distributionItem.quantity_in_stock || 0)) {
+            showToast("Quantity cannot exceed warehouse stock.", "error");
+            return;
+        }
+
+        try {
+            setDistributing(true);
+            const data = await fetchJson("/admin/warehouse/distribute", {
+                method: "POST",
+                body: JSON.stringify({
+                    from_branch_id: distributionItem.branch_id,
+                    to_branch_id: distributionForm.mode === "ALL" ? "ALL" : distributionForm.to_branch_id,
+                    product_id: distributionItem.product_id,
+                    quantity,
+                    approved_by: user.user_id,
+                }),
+            });
+
+            setDistributionItem(null);
+            setDistributionForm({ mode: "SINGLE", to_branch_id: "", quantity: "" });
+            showToast(data.message || "Warehouse stock distribution created.");
+            fetchData();
+        } catch (err) {
+            showToast(err.message || "Failed to distribute warehouse stock.", "error");
+        } finally {
+            setDistributing(false);
+        }
     };
 
     const approveWarehouseTransfer = async (transfer) => {
@@ -366,18 +440,28 @@ export default function AdminWarehouseManagement() {
                                                 <StockStatusBadge status={item.status} />
                                             </td>
                                             <td className="border-b border-blue-50 pl-5 text-right">
-                                                <button
-                                                    onClick={() => goToPurchase(item)}
-                                                    disabled={item.status === "HEALTHY"}
-                                                    className={`inline-flex min-w-[122px] items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition ${
-                                                        item.status === "HEALTHY"
-                                                            ? "cursor-not-allowed bg-gray-100 text-gray-400"
-                                                            : "bg-[#0c2f73] text-white shadow-sm hover:bg-[#103986] hover:shadow"
-                                                    }`}
-                                                >
-                                                    <ShoppingCart size={15} />
-                                                    {item.status === "HEALTHY" ? "Enough Stock" : "Add Purchase"}
-                                                </button>
+                                                <div className="flex justify-end gap-2">
+                                                    <button
+                                                        onClick={() => openDistributionModal(item)}
+                                                        disabled={Number(item.quantity_in_stock || 0) <= 0}
+                                                        className="inline-flex min-w-[112px] items-center justify-center gap-2 rounded-xl bg-green-50 px-3 py-2.5 text-xs font-extrabold text-green-700 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                                                    >
+                                                        <RefreshCcw size={15} />
+                                                        Distribute
+                                                    </button>
+                                                    <button
+                                                        onClick={() => goToPurchase(item)}
+                                                        disabled={item.status === "HEALTHY"}
+                                                        className={`inline-flex min-w-[122px] items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition ${
+                                                            item.status === "HEALTHY"
+                                                                ? "cursor-not-allowed bg-gray-100 text-gray-400"
+                                                                : "bg-[#0c2f73] text-white shadow-sm hover:bg-[#103986] hover:shadow"
+                                                        }`}
+                                                    >
+                                                        <ShoppingCart size={15} />
+                                                        {item.status === "HEALTHY" ? "Enough Stock" : "Add Purchase"}
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     ))
@@ -584,6 +668,18 @@ export default function AdminWarehouseManagement() {
                     }}
                     onReject={rejectWarehouseTransfer}
                     loading={processingTransfer === `reject-${rejectTransfer.transfer_id}`}
+                />
+            )}
+
+            {distributionItem && (
+                <DistributionModal
+                    item={distributionItem}
+                    branches={branchOptions}
+                    form={distributionForm}
+                    setForm={setDistributionForm}
+                    onClose={() => setDistributionItem(null)}
+                    onSubmit={submitDistribution}
+                    loading={distributing}
                 />
             )}
 
@@ -922,6 +1018,170 @@ function WarehouseStockReminder({ item }) {
             >
                 {hasEnoughStock ? "Enough stock" : "Not enough stock"}
             </span>
+        </div>
+    );
+}
+
+function DistributionModal({ item, branches, form, setForm, onClose, onSubmit, loading }) {
+    const isAllBranches = form.mode === "ALL";
+    const selectedBranch = branches.find(
+        (branch) => Number(branch.branch_id) === Number(form.to_branch_id)
+    );
+    const requestedQuantity = Number(form.quantity || 0);
+    const warehouseStock = Number(item.quantity_in_stock || 0);
+    const maxQuantityPerBranch = isAllBranches && branches.length
+        ? Math.floor(warehouseStock / branches.length)
+        : warehouseStock;
+    const totalQuantity = requestedQuantity * (isAllBranches ? branches.length : 1);
+    const remainingStock = Math.max(warehouseStock - totalQuantity, 0);
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-[560px] rounded-3xl bg-white p-7 shadow-2xl">
+                <div className="mb-6 flex items-start justify-between gap-4">
+                    <div>
+                        <h2 className="text-2xl font-extrabold text-[#07102f]">
+                            Distribute Warehouse Stock
+                        </h2>
+                        <p className="mt-1 text-sm text-[#6f85a3]">
+                            Create an approved transfer for branch manager receiving.
+                        </p>
+                    </div>
+
+                    <button
+                        onClick={onClose}
+                        className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef6fb] text-[#254e7a] hover:bg-blue-100"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="mb-5 rounded-2xl bg-[#f8fcff] p-4">
+                    <p className="text-xs font-extrabold uppercase text-[#6f85a3]">Product</p>
+                    <p className="mt-1 font-extrabold text-[#07102f]">{item.product_name}</p>
+                    <p className="mt-1 text-xs font-bold text-[#6f85a3]">{item.product_code}</p>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                        <InfoItem label="Source Warehouse" value={item.warehouse_name} />
+                        <InfoItem label="Available Stock" value={warehouseStock} />
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    <div>
+                        <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            Distribution Mode
+                        </span>
+                        <div className="grid grid-cols-2 gap-3">
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setForm((current) => ({
+                                        ...current,
+                                        mode: "SINGLE",
+                                        to_branch_id: "",
+                                    }))
+                                }
+                                className={`rounded-2xl border px-4 py-3 text-sm font-extrabold ${
+                                    !isAllBranches
+                                        ? "border-[#1e4db7] bg-blue-50 text-[#0c2f73]"
+                                        : "border-blue-100 text-[#6f85a3] hover:bg-[#f8fcff]"
+                                }`}
+                            >
+                                Single Branch
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setForm((current) => ({
+                                        ...current,
+                                        mode: "ALL",
+                                        to_branch_id: "",
+                                    }))
+                                }
+                                className={`rounded-2xl border px-4 py-3 text-sm font-extrabold ${
+                                    isAllBranches
+                                        ? "border-[#1e4db7] bg-blue-50 text-[#0c2f73]"
+                                        : "border-blue-100 text-[#6f85a3] hover:bg-[#f8fcff]"
+                                }`}
+                            >
+                                All Branches
+                            </button>
+                        </div>
+                    </div>
+
+                    <label className="block">
+                        <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            Destination Branch
+                        </span>
+                        <select
+                            value={form.to_branch_id}
+                            disabled={isAllBranches}
+                            onChange={(event) =>
+                                setForm((current) => ({
+                                    ...current,
+                                    to_branch_id: event.target.value,
+                                }))
+                            }
+                            className="h-12 w-full rounded-2xl border border-blue-100 px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7] disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+                        >
+                            <option value="">{isAllBranches ? `All ${branches.length} branches selected` : "Select branch"}</option>
+                            {branches.map((branch) => (
+                                <option key={branch.branch_id} value={branch.branch_id}>
+                                    {branch.branch_code} - {branch.branch_name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <label className="block">
+                        <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            {isAllBranches ? "Quantity Per Branch" : "Quantity To Distribute"}
+                        </span>
+                        <input
+                            type="number"
+                            min="1"
+                            max={maxQuantityPerBranch}
+                            value={form.quantity}
+                            onChange={(event) =>
+                                setForm((current) => ({
+                                    ...current,
+                                    quantity: event.target.value,
+                                }))
+                            }
+                            placeholder="Enter quantity"
+                            className="h-12 w-full rounded-2xl border border-blue-100 px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7]"
+                        />
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <InfoItem
+                            label="Branch"
+                            value={isAllBranches ? `${branches.length} branches` : selectedBranch?.branch_name || "-"}
+                        />
+                        <InfoItem label="Total Quantity Required" value={requestedQuantity ? totalQuantity : "-"} />
+                        <InfoItem label="Quantity Per Branch" value={requestedQuantity ? requestedQuantity : "-"} />
+                        <InfoItem label="Warehouse After Transfer" value={requestedQuantity ? remainingStock : "-"} />
+                    </div>
+                </div>
+
+                <div className="mt-6 grid grid-cols-2 gap-3">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="rounded-2xl bg-[#eef6fb] py-4 font-extrabold text-[#17325c] hover:bg-blue-100"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onSubmit}
+                        disabled={loading}
+                        className="rounded-2xl bg-green-600 py-4 font-extrabold text-white hover:bg-green-700 disabled:cursor-wait disabled:bg-gray-300"
+                    >
+                        {loading ? "Distributing..." : "Create Distribution"}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

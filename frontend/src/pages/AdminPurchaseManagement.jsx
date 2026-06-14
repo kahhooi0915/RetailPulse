@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatCentsInput, formatMoneyValue } from "../utils/moneyInput";
 
 const API_BASE = "http://localhost:5000";
 
@@ -43,6 +44,7 @@ export default function AdminPurchaseManagement() {
     const [suppliers, setSuppliers] = useState([]);
     const [branches, setBranches] = useState([]);
     const [supplierProducts, setSupplierProducts] = useState([]);
+    const [productsNotPurchased, setProductsNotPurchased] = useState([]);
 
     const [searchTerm, setSearchTerm] = useState("");
     const [loading, setLoading] = useState(true);
@@ -88,17 +90,19 @@ export default function AdminPurchaseManagement() {
         try {
             setLoading(true);
 
-            const [purchaseRes, supplierRes, branchRes, supplierProductRes] = await Promise.all([
+            const [purchaseRes, supplierRes, branchRes, supplierProductRes, productsNotPurchasedRes] = await Promise.all([
                 fetch(`${API_BASE}/admin/purchases`),
                 fetch(`${API_BASE}/admin/suppliers`),
                 fetch(`${API_BASE}/admin/branches`),
                 fetch(`${API_BASE}/admin/supplier-products?available=1`),
+                fetch(`${API_BASE}/admin/purchases/products-not-purchased`),
             ]);
 
             setPurchases(await purchaseRes.json());
             setSuppliers(await supplierRes.json());
             setBranches(await branchRes.json());
             setSupplierProducts(await supplierProductRes.json());
+            setProductsNotPurchased(await productsNotPurchasedRes.json());
         } catch (error) {
             console.error(error);
             showToast("Failed to load purchase data.", "error");
@@ -121,6 +125,26 @@ export default function AdminPurchaseManagement() {
     const openCreatePurchase = () => {
         setFocusedProductId("");
         setPurchaseForm({ ...emptyPurchase, items: [createEmptyPurchaseItem()] });
+        setShowPurchaseForm(true);
+    };
+
+    const openFirstPurchaseForProduct = (product) => {
+        const warehouse = branches.find((branch) => branch.branch_type === "WAREHOUSE");
+
+        setFocusedProductId(String(product.product_id));
+        setPurchaseForm({
+            ...emptyPurchase,
+            supplier_id: String(product.supplier_id),
+            receiving_branch_id: warehouse ? String(warehouse.branch_id) : "",
+            notes: `First purchase order for ${product.product_name}.`,
+            items: [{
+                ...createEmptyPurchaseItem(),
+                product_id: String(product.product_id),
+                quantity: "",
+                purchase_price: formatMoneyValue(product.purchase_price),
+                lead_time_days: product.lead_time_days ?? "",
+            }],
+        });
         setShowPurchaseForm(true);
     };
 
@@ -219,7 +243,7 @@ export default function AdminPurchaseManagement() {
                 ...createEmptyPurchaseItem(),
                 product_id: String(productId),
                 quantity: "",
-                purchase_price: String(supplierProduct.purchase_price),
+                purchase_price: formatMoneyValue(supplierProduct.purchase_price),
                 lead_time_days: supplierProduct.lead_time_days ?? "",
             }],
         });
@@ -248,7 +272,9 @@ export default function AdminPurchaseManagement() {
                     ...createEmptyPurchaseItem(),
                     product_id: String(focusedProductId),
                     quantity: purchaseForm.items[0]?.quantity || "",
-                    purchase_price: selectedSupplierProduct ? String(selectedSupplierProduct.purchase_price) : "",
+                    purchase_price: selectedSupplierProduct
+                        ? formatMoneyValue(selectedSupplierProduct.purchase_price)
+                        : "",
                     lead_time_days: selectedSupplierProduct?.lead_time_days ?? "",
                 }]
                 : [createEmptyPurchaseItem()],
@@ -294,7 +320,9 @@ export default function AdminPurchaseManagement() {
                     return {
                         ...item,
                         product_id: value,
-                        purchase_price: supplierProduct ? String(supplierProduct.purchase_price) : "",
+                        purchase_price: supplierProduct
+                            ? formatMoneyValue(supplierProduct.purchase_price)
+                            : "",
                         lead_time_days: supplierProduct?.lead_time_days ?? "",
                     };
                 }
@@ -617,6 +645,11 @@ export default function AdminPurchaseManagement() {
                             <SummaryCard title="Received" value={receivedCount} icon={CheckCircle} color="text-green-600" />
                         </section>
 
+                        <ProductsNotPurchasedPanel
+                            products={productsNotPurchased}
+                            onCreatePurchase={openFirstPurchaseForProduct}
+                        />
+
                         <section className="rounded-2xl bg-white p-6 shadow-sm">
                             <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
                                 <div>
@@ -779,10 +812,16 @@ export default function AdminPurchaseManagement() {
                                                     </td>
                                                     <td className="px-4 py-3">
                                                         <input
-                                                            type="number"
-                                                            step="0.01"
+                                                            type="text"
+                                                            inputMode="numeric"
                                                             value={item.purchase_price}
-                                                            onChange={(e) => updatePurchaseItem(item.row_id, "purchase_price", e.target.value)}
+                                                            onChange={(e) =>
+                                                                updatePurchaseItem(
+                                                                    item.row_id,
+                                                                    "purchase_price",
+                                                                    formatCentsInput(e.target.value)
+                                                                )
+                                                            }
                                                             placeholder="0.00"
                                                             className="w-32 rounded-2xl bg-[#eef6fb] px-3 py-2 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]"
                                                         />
@@ -984,6 +1023,67 @@ function PurchaseTable({ purchases, onView, onOrdered, onReceived }) {
                 </tbody>
             </table>
         </div>
+    );
+}
+
+function ProductsNotPurchasedPanel({ products, onCreatePurchase }) {
+    if (!products.length) return null;
+
+    return (
+        <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
+            <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 className="text-xl font-extrabold text-[#07102f]">Products Not Yet Purchased</h2>
+                    <p className="mt-1 text-sm text-[#6f85a3]">
+                        Create the first supplier purchase order for newly added products.
+                    </p>
+                </div>
+                <span className="w-fit rounded-full bg-[#eef6fb] px-4 py-2 text-xs font-extrabold uppercase tracking-widest text-[#1e4db7]">
+                    {products.length} ready
+                </span>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+                {products.map((product) => (
+                    <div
+                        key={product.product_id}
+                        className="rounded-2xl border border-blue-50 bg-[#f8fcff] p-4"
+                    >
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="min-w-0">
+                                <p className="truncate font-extrabold text-[#17325c]">
+                                    {product.product_name}
+                                </p>
+                                <p className="mt-1 text-xs font-bold text-[#6f85a3]">
+                                    {product.product_code || `PID-${product.product_id}`} | {product.category_name}
+                                </p>
+                                <p className="mt-2 text-sm font-semibold text-[#6f85a3]">
+                                    Supplier: <span className="font-extrabold text-[#17325c]">{product.supplier_name}</span>
+                                </p>
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-3">
+                                <div className="text-right">
+                                    <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                                        Purchase Price
+                                    </p>
+                                    <p className="font-extrabold text-[#0c2f73]">
+                                        {formatCurrency(product.purchase_price)}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => onCreatePurchase(product)}
+                                    className="rounded-2xl bg-[#0c2f73] px-4 py-3 text-sm font-extrabold text-white hover:bg-[#103986]"
+                                >
+                                    Create Purchase
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
     );
 }
 

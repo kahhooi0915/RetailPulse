@@ -120,9 +120,9 @@ def reset_password():
             reset_tokens.pop(token, None)
             return jsonify({"message": "Reset token has expired"}), 400
 
-        if len(new_password) < 6 or not re.search(PASSWORD_SPECIAL_CHAR_PATTERN, new_password):
+        if len(new_password) < 8 or not re.search(PASSWORD_SPECIAL_CHAR_PATTERN, new_password):
             return jsonify({
-                "message": "Password must be at least 6 characters and include one special character"
+                "message": "Password must be at least 8 characters and include one special character"
             }), 400
 
         conn = get_connection()

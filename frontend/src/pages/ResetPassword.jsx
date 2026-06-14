@@ -16,7 +16,7 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const passwordRequirementText = "Password must be at least 6 characters and include one special character.";
+  const passwordRequirementText = "Password must be at least 8 characters and include one special character.";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -33,7 +33,7 @@ export default function ResetPassword() {
       return;
     }
 
-    if (newPassword.length < 6 || !/[^\w\s]/.test(newPassword)) {
+    if (newPassword.length < 8 || !/[^\w\s]/.test(newPassword)) {
       setError(passwordRequirementText);
       return;
     }
@@ -100,7 +100,7 @@ export default function ResetPassword() {
                 <input
                   type={showNewPassword ? "text" : "password"}
                   required
-                  minLength={6}
+                  minLength={8}
                   className="ml-3 w-full bg-transparent pr-2 text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   placeholder="Enter new password"
                   value={newPassword}
@@ -136,7 +136,7 @@ export default function ResetPassword() {
                 <input
                   type={showConfirmPassword ? "text" : "password"}
                   required
-                  minLength={6}
+                  minLength={8}
                   className="ml-3 w-full bg-transparent pr-2 text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   placeholder="Confirm new password"
                   value={confirmPassword}
