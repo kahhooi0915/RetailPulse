@@ -116,7 +116,7 @@ export const sidebarItems = {
         {
             label: "Dashboard",
             icon: BarChart3,
-            path: "/manager/dashboard",
+            path: "/manager-dashboard",
         },
         {
             label: "Inventory Management",
@@ -125,19 +125,14 @@ export const sidebarItems = {
                 {
                     label: "Branch Inventory",
                     icon: Boxes,
-                    path: "/manager/inventory",
+                    path: "/manager-inventory",
                 },
                 {
                     label: "Stock Transfer",
                     icon: ShoppingCart,
-                    path: "/manager/stock-transfer",
+                    path: "/manager-stock-transfer",
                 },
             ],
-        },
-        {
-            label: "Reports",
-            icon: TrendingUp,
-            path: "/manager/reports",
         },
     ],
 

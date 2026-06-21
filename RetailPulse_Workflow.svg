@@ -1,0 +1,154 @@
+<svg width="1600" height="1050" viewBox="0 0 1600 1050" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .title { font: 800 46px Arial, sans-serif; fill: #122033; }
+      .subtitle { font: 400 20px Arial, sans-serif; fill: #536274; }
+      .lane-title { font: 800 28px Arial, sans-serif; fill: #122033; }
+      .lane-subtitle { font: 400 16px Arial, sans-serif; fill: #536274; }
+      .box-title { font: 700 18px Arial, sans-serif; fill: #122033; }
+      .box-text { font: 400 15px Arial, sans-serif; fill: #405064; }
+      .small-text { font: 700 13px Arial, sans-serif; fill: #5c6a7b; letter-spacing: .6px; }
+      .footer { font: 400 16px Arial, sans-serif; fill: #536274; }
+      .lane { stroke: #d9e1ea; stroke-width: 2; }
+      .card { fill: #ffffff; stroke: #cad5e2; stroke-width: 2; }
+      .pill { fill: #f4f7fb; stroke: #d6e0eb; stroke-width: 1.5; }
+      .arrow { stroke: #60738a; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowHead); }
+      .soft-arrow { stroke: #98a6b6; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowHeadSoft); stroke-dasharray: 7 9; }
+      .staff { fill: #eaf7f0; }
+      .manager { fill: #edf4ff; }
+      .admin { fill: #fff5e8; }
+      .system { fill: #f4f1ff; }
+      .staff-accent { fill: #1d9a6c; }
+      .manager-accent { fill: #276dd8; }
+      .admin-accent { fill: #d87917; }
+      .system-accent { fill: #7056c9; }
+    </style>
+    <marker id="arrowHead" markerWidth="12" markerHeight="12" refX="9" refY="5.5" orient="auto">
+      <path d="M1 1L10 5.5L1 10" stroke="#60738a" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowHeadSoft" markerWidth="12" markerHeight="12" refX="9" refY="5.5" orient="auto">
+      <path d="M1 1L10 5.5L1 10" stroke="#98a6b6" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#223044" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1050" fill="#f7f9fc"/>
+
+  <text x="80" y="80" class="title">RetailPulse System Workflow</text>
+  <text x="80" y="116" class="subtitle">Role-based flow for Branch Staff, Inventory Manager, System Admin, and shared business data</text>
+
+  <rect x="80" y="155" width="1440" height="94" rx="8" class="card" filter="url(#shadow)"/>
+  <circle cx="131" cy="202" r="25" class="system-accent"/>
+  <text x="123" y="211" font-family="Arial, sans-serif" font-size="27" font-weight="800" fill="#fff">1</text>
+  <text x="175" y="194" class="box-title">Login and Role Check</text>
+  <text x="175" y="222" class="box-text">User signs in, then RetailPulse opens the correct dashboard based on role: Branch Staff, Inventory Manager, or System Admin.</text>
+
+  <rect x="80" y="295" width="445" height="525" rx="12" class="lane staff"/>
+  <rect x="578" y="295" width="445" height="525" rx="12" class="lane manager"/>
+  <rect x="1075" y="295" width="445" height="525" rx="12" class="lane admin"/>
+
+  <circle cx="123" cy="342" r="27" class="staff-accent"/>
+  <text x="112" y="352" font-family="Arial, sans-serif" font-size="28" font-weight="800" fill="#fff">S</text>
+  <text x="164" y="338" class="lane-title">Branch Staff</text>
+  <text x="164" y="365" class="lane-subtitle">Daily store operations and stock requests</text>
+
+  <circle cx="621" cy="342" r="27" class="manager-accent"/>
+  <text x="608" y="352" font-family="Arial, sans-serif" font-size="28" font-weight="800" fill="#fff">M</text>
+  <text x="662" y="338" class="lane-title">Inventory Manager</text>
+  <text x="662" y="365" class="lane-subtitle">Branch inventory control and stock transfers</text>
+
+  <circle cx="1118" cy="342" r="27" class="admin-accent"/>
+  <text x="1106" y="352" font-family="Arial, sans-serif" font-size="28" font-weight="800" fill="#fff">A</text>
+  <text x="1159" y="338" class="lane-title">System Admin</text>
+  <text x="1159" y="365" class="lane-subtitle">System setup, monitoring, and reporting</text>
+
+  <rect x="112" y="408" width="381" height="88" rx="8" class="card"/>
+  <rect x="132" y="428" width="48" height="48" rx="8" class="staff-accent"/>
+  <text x="143" y="461" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">POS</text>
+  <text x="200" y="443" class="box-title">Process Sales</text>
+  <text x="200" y="471" class="box-text">Record customer purchases and update sales records.</text>
+
+  <rect x="112" y="532" width="381" height="88" rx="8" class="card"/>
+  <rect x="132" y="552" width="48" height="48" rx="8" class="staff-accent"/>
+  <text x="145" y="585" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">ST</text>
+  <text x="200" y="567" class="box-title">Request Stock</text>
+  <text x="200" y="595" class="box-text">Submit branch stock request when items run low.</text>
+
+  <rect x="112" y="656" width="381" height="88" rx="8" class="card"/>
+  <rect x="132" y="676" width="48" height="48" rx="8" class="staff-accent"/>
+  <text x="144" y="709" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">AN</text>
+  <text x="200" y="691" class="box-title">View Analytics</text>
+  <text x="200" y="719" class="box-text">Check branch sales and product performance.</text>
+
+  <rect x="610" y="408" width="381" height="88" rx="8" class="card"/>
+  <rect x="630" y="428" width="48" height="48" rx="8" class="manager-accent"/>
+  <text x="641" y="461" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">BI</text>
+  <text x="698" y="443" class="box-title">Monitor Branch Inventory</text>
+  <text x="698" y="471" class="box-text">Track stock levels, low stock, and branch needs.</text>
+
+  <rect x="610" y="532" width="381" height="88" rx="8" class="card"/>
+  <rect x="630" y="552" width="48" height="48" rx="8" class="manager-accent"/>
+  <text x="641" y="585" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">TR</text>
+  <text x="698" y="567" class="box-title">Manage Stock Transfer</text>
+  <text x="698" y="595" class="box-text">Review requests and move stock between branches.</text>
+
+  <rect x="610" y="656" width="381" height="88" rx="8" class="card"/>
+  <rect x="630" y="676" width="48" height="48" rx="8" class="manager-accent"/>
+  <text x="642" y="709" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">DB</text>
+  <text x="698" y="691" class="box-title">Dashboard Decisions</text>
+  <text x="698" y="719" class="box-text">Use inventory status to decide replenishment priority.</text>
+
+  <rect x="1107" y="408" width="381" height="88" rx="8" class="card"/>
+  <rect x="1127" y="428" width="48" height="48" rx="8" class="admin-accent"/>
+  <text x="1138" y="461" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">US</text>
+  <text x="1195" y="443" class="box-title">Manage Users and Branches</text>
+  <text x="1195" y="471" class="box-text">Create accounts, assign roles, and maintain branches.</text>
+
+  <rect x="1107" y="532" width="381" height="88" rx="8" class="card"/>
+  <rect x="1127" y="552" width="48" height="48" rx="8" class="admin-accent"/>
+  <text x="1138" y="585" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">CA</text>
+  <text x="1195" y="567" class="box-title">Catalog and Suppliers</text>
+  <text x="1195" y="595" class="box-text">Maintain products, categories, and supplier details.</text>
+
+  <rect x="1107" y="656" width="381" height="88" rx="8" class="card"/>
+  <rect x="1127" y="676" width="48" height="48" rx="8" class="admin-accent"/>
+  <text x="1139" y="709" font-family="Arial, sans-serif" font-size="25" font-weight="800" fill="#fff">RP</text>
+  <text x="1195" y="691" class="box-title">Reports and Forecasting</text>
+  <text x="1195" y="719" class="box-text">Monitor sales, inventory, purchases, and forecasts.</text>
+
+  <rect x="80" y="875" width="1440" height="110" rx="12" class="system"/>
+  <circle cx="130" cy="930" r="28" class="system-accent"/>
+  <text x="119" y="940" font-family="Arial, sans-serif" font-size="29" font-weight="800" fill="#fff">D</text>
+  <text x="178" y="917" class="lane-title">Shared RetailPulse Data Layer</text>
+  <text x="178" y="948" class="box-text">Sales records, inventory quantities, products, suppliers, branches, purchases, audit logs, forecasts, and AI recommendations.</text>
+
+  <rect x="1196" y="890" width="260" height="74" rx="8" class="pill"/>
+  <text x="1221" y="921" class="box-title">AI Business Assistant</text>
+  <text x="1221" y="948" class="box-text">Answers inventory, sales, and forecast questions.</text>
+
+  <path d="M272 249V392" class="arrow"/>
+  <path d="M772 249V392" class="arrow"/>
+  <path d="M1273 249V392" class="arrow"/>
+
+  <path d="M493 576H610" class="arrow"/>
+  <text x="506" y="554" class="small-text">STOCK REQUEST</text>
+
+  <path d="M991 576H1107" class="soft-arrow"/>
+  <text x="1007" y="554" class="small-text">WAREHOUSE / PURCHASE NEED</text>
+
+  <path d="M303 496V864" class="soft-arrow"/>
+  <text x="320" y="838" class="small-text">SALES UPDATE INVENTORY</text>
+
+  <path d="M802 744V864" class="soft-arrow"/>
+  <text x="819" y="838" class="small-text">TRANSFER UPDATES STOCK</text>
+
+  <path d="M1298 744V864" class="soft-arrow"/>
+  <text x="1315" y="838" class="small-text">REPORTS AND AUDIT</text>
+
+  <path d="M1196 927H1054" class="soft-arrow"/>
+  <path d="M1196 927H530" class="soft-arrow"/>
+
+  <text x="80" y="1021" class="footer">Created for RetailPulse evaluation: shows how each role contributes to sales, inventory control, reporting, forecasting, and system administration.</text>
+</svg>

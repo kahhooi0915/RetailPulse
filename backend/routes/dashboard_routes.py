@@ -36,7 +36,7 @@ def admin_dashboard_summary():
         cur.execute("""
             SELECT COUNT(*)
             FROM stock_transfer
-            WHERE status = 'PENDING'
+            WHERE status IN ('PENDING', 'PENDING_SOURCE')
         """)
         pending_transfers = cur.fetchone()[0]
 

@@ -39,6 +39,7 @@ export default function AdminWarehouseManagement() {
     const [search, setSearch] = useState("");
     const [warehouseFilter, setWarehouseFilter] = useState("ALL");
     const [stockFilter, setStockFilter] = useState("ALL");
+    const [transferSort, setTransferSort] = useState("UPDATED_DESC");
     const [stockPage, setStockPage] = useState(1);
     const [approvalPage, setApprovalPage] = useState(1);
     const [transferPage, setTransferPage] = useState(1);
@@ -54,6 +55,7 @@ export default function AdminWarehouseManagement() {
         to_branch_id: "",
         quantity: "",
     });
+    const [distributionError, setDistributionError] = useState("");
     const [distributing, setDistributing] = useState(false);
     const [toast, setToast] = useState(null);
 
@@ -70,7 +72,9 @@ export default function AdminWarehouseManagement() {
         const data = await res.json().catch(() => ({}));
 
         if (!res.ok) {
-            throw new Error(data.message || "Request failed");
+            const error = new Error(data.message || "Request failed");
+            error.data = data;
+            throw error;
         }
 
         return data;
@@ -109,7 +113,7 @@ export default function AdminWarehouseManagement() {
         setStockPage(1);
         setApprovalPage(1);
         setTransferPage(1);
-    }, [search, warehouseFilter, stockFilter]);
+    }, [search, warehouseFilter, stockFilter, transferSort]);
 
     const warehouseOptions = useMemo(() => {
         const names = stock.map((item) => item.warehouse_name).filter(Boolean);
@@ -137,7 +141,7 @@ export default function AdminWarehouseManagement() {
     const filteredTransfers = useMemo(() => {
         const keyword = search.trim().toLowerCase();
 
-        return transfers.filter((item) => {
+        const filtered = transfers.filter((item) => {
             if (!keyword) return true;
 
             return (
@@ -148,7 +152,9 @@ export default function AdminWarehouseManagement() {
                 item.status?.toLowerCase().includes(keyword)
             );
         });
-    }, [transfers, search]);
+
+        return sortTransfers(filtered, transferSort);
+    }, [transfers, search, transferSort]);
 
     const filteredWarehouseApprovals = useMemo(() => {
         const keyword = search.trim().toLowerCase();
@@ -168,7 +174,7 @@ export default function AdminWarehouseManagement() {
 
     const paginatedStock = paginate(filteredStock, stockPage);
     const pendingApprovals = useMemo(() => {
-        return filteredWarehouseApprovals.filter((item) => item.status === "PENDING");
+        return filteredWarehouseApprovals.filter((item) => item.status === "PENDING_SOURCE");
     }, [filteredWarehouseApprovals]);
     const paginatedApprovals = paginate(pendingApprovals, approvalPage);
     const paginatedTransfers = paginate(filteredTransfers, transferPage);
@@ -197,6 +203,7 @@ export default function AdminWarehouseManagement() {
 
     const openDistributionModal = (item) => {
         setDistributionItem(item);
+        setDistributionError("");
         setDistributionForm({
             mode: "SINGLE",
             to_branch_id: "",
@@ -208,12 +215,14 @@ export default function AdminWarehouseManagement() {
         if (!distributionItem) return;
 
         if (distributionForm.mode !== "ALL" && !distributionForm.to_branch_id) {
+            setDistributionError("Select a destination branch before creating the distribution.");
             showToast("Select a destination branch.", "error");
             return;
         }
 
         const quantity = Number(distributionForm.quantity);
         if (!quantity || quantity <= 0) {
+            setDistributionError("Enter a quantity greater than 0.");
             showToast("Quantity must be greater than 0.", "error");
             return;
         }
@@ -222,16 +231,21 @@ export default function AdminWarehouseManagement() {
         const totalQuantity = quantity * branchCount;
 
         if (branchCount <= 0) {
+            setDistributionError("No branch is available for distribution.");
             showToast("No branch is available for distribution.", "error");
             return;
         }
 
-        if (totalQuantity > Number(distributionItem.quantity_in_stock || 0)) {
-            showToast("Quantity cannot exceed warehouse stock.", "error");
+        const availableStock = Number(distributionItem.quantity_in_stock || 0);
+        if (totalQuantity > availableStock) {
+            const stockMessage = `Not enough warehouse stock. Available: ${availableStock}, required: ${totalQuantity}.`;
+            setDistributionError(stockMessage);
+            showToast(stockMessage, "error");
             return;
         }
 
         try {
+            setDistributionError("");
             setDistributing(true);
             const data = await fetchJson("/admin/warehouse/distribute", {
                 method: "POST",
@@ -249,7 +263,12 @@ export default function AdminWarehouseManagement() {
             showToast(data.message || "Warehouse stock distribution created.");
             fetchData();
         } catch (err) {
-            showToast(err.message || "Failed to distribute warehouse stock.", "error");
+            const data = err.data || {};
+            const stockMessage = data.available_stock !== undefined && data.requested_quantity !== undefined
+                ? `${err.message}. Available: ${data.available_stock}, required: ${data.requested_quantity}.`
+                : err.message || "Failed to distribute warehouse stock.";
+            setDistributionError(stockMessage);
+            showToast(stockMessage, "error");
         } finally {
             setDistributing(false);
         }
@@ -576,8 +595,29 @@ export default function AdminWarehouseManagement() {
                     badge={`${filteredTransfers.length} requests`}
                     badgeTone="purple"
                 >
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-[#6f85a3]">
+                            Showing recently updated requests first by default.
+                        </p>
+
+                        <label className="flex items-center gap-2 text-sm font-extrabold text-[#17325c]">
+                            Sort
+                            <select
+                                value={transferSort}
+                                onChange={(event) => setTransferSort(event.target.value)}
+                                className="h-10 rounded-2xl border border-blue-100 bg-white px-4 text-sm font-bold outline-none transition focus:border-[#1e4db7]"
+                            >
+                                <option value="UPDATED_DESC">Recently updated</option>
+                                <option value="UPDATED_ASC">Oldest updated</option>
+                                <option value="TRANSFER_DESC">Newest transfer date</option>
+                                <option value="TRANSFER_ASC">Oldest transfer date</option>
+                                <option value="STATUS">Status</option>
+                            </select>
+                        </label>
+                    </div>
+
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1060px] border-separate border-spacing-0 text-left text-sm">
+                        <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-left text-sm">
                             <thead className="sticky top-0 z-10 bg-white">
                                 <tr className="border-b text-[#6f85a3]">
                                     <th className="border-b py-3 pr-5 text-xs font-extrabold uppercase">Transfer Code</th>
@@ -585,6 +625,7 @@ export default function AdminWarehouseManagement() {
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Destination Branch</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Requested By</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Transfer Date</th>
+                                    <th className="border-b px-5 text-xs font-extrabold uppercase">Last Update</th>
                                     <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Items</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Status</th>
                                     <th className="border-b pl-5 text-right text-xs font-extrabold uppercase">Action</th>
@@ -592,9 +633,9 @@ export default function AdminWarehouseManagement() {
                             </thead>
                             <tbody>
                                 {loading ? (
-                                    <EmptyRow colSpan={8} text="Loading branch requests..." />
+                                    <EmptyRow colSpan={9} text="Loading branch requests..." />
                                 ) : paginatedTransfers.length === 0 ? (
-                                    <EmptyRow colSpan={8} text="No warehouse branch transfer requests found." />
+                                    <EmptyRow colSpan={9} text="No warehouse branch transfer requests found." />
                                 ) : (
                                     paginatedTransfers.map((transfer) => (
                                         <tr
@@ -615,6 +656,9 @@ export default function AdminWarehouseManagement() {
                                             </td>
                                             <td className="border-b border-blue-50 px-5 font-semibold text-[#6f85a3]">
                                                 {formatDateTime(transfer.transfer_date)}
+                                            </td>
+                                            <td className="border-b border-blue-50 px-5 font-semibold text-[#6f85a3]">
+                                                {formatDateTime(getTransferUpdatedAt(transfer))}
                                             </td>
                                             <td className="border-b border-blue-50 px-5 text-right font-extrabold text-[#07102f]">
                                                 {transfer.items_count}
@@ -677,7 +721,12 @@ export default function AdminWarehouseManagement() {
                     branches={branchOptions}
                     form={distributionForm}
                     setForm={setDistributionForm}
-                    onClose={() => setDistributionItem(null)}
+                    error={distributionError}
+                    setError={setDistributionError}
+                    onClose={() => {
+                        setDistributionItem(null);
+                        setDistributionError("");
+                    }}
                     onSubmit={submitDistribution}
                     loading={distributing}
                 />
@@ -843,9 +892,13 @@ function StockStatusBadge({ status }) {
 function TransferStatusBadge({ status }) {
     const styles = {
         PENDING: "bg-orange-50 text-orange-700",
+        PENDING_SOURCE: "bg-purple-50 text-purple-700",
         APPROVED: "bg-blue-50 text-[#1e4db7]",
         REJECTED: "bg-red-50 text-red-700",
         RECEIVED: "bg-green-50 text-green-700",
+    };
+    const labels = {
+        PENDING_SOURCE: "SOURCE REVIEW",
     };
 
     return (
@@ -854,7 +907,7 @@ function TransferStatusBadge({ status }) {
                 styles[status] || "bg-gray-50 text-gray-600"
             }`}
         >
-            {status || "-"}
+            {labels[status] || status || "-"}
         </span>
     );
 }
@@ -1022,18 +1075,29 @@ function WarehouseStockReminder({ item }) {
     );
 }
 
-function DistributionModal({ item, branches, form, setForm, onClose, onSubmit, loading }) {
+function DistributionModal({ item, branches, form, setForm, error, setError, onClose, onSubmit, loading }) {
     const isAllBranches = form.mode === "ALL";
     const selectedBranch = branches.find(
         (branch) => Number(branch.branch_id) === Number(form.to_branch_id)
     );
     const requestedQuantity = Number(form.quantity || 0);
     const warehouseStock = Number(item.quantity_in_stock || 0);
+    const branchCount = isAllBranches ? branches.length : 1;
     const maxQuantityPerBranch = isAllBranches && branches.length
         ? Math.floor(warehouseStock / branches.length)
         : warehouseStock;
-    const totalQuantity = requestedQuantity * (isAllBranches ? branches.length : 1);
+    const totalQuantity = requestedQuantity * branchCount;
     const remainingStock = Math.max(warehouseStock - totalQuantity, 0);
+    const hasQuantity = requestedQuantity > 0;
+    const hasInsufficientStock = hasQuantity && totalQuantity > warehouseStock;
+    const hasNoStock = warehouseStock <= 0;
+    const stockError = hasNoStock
+        ? "This warehouse has no stock available for this product."
+        : hasInsufficientStock
+            ? `Not enough warehouse stock. Available: ${warehouseStock}, required: ${totalQuantity}.`
+            : "";
+    const displayError = stockError || error;
+    const disableSubmit = loading || hasNoStock || hasInsufficientStock;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
@@ -1074,35 +1138,41 @@ function DistributionModal({ item, branches, form, setForm, onClose, onSubmit, l
                         <div className="grid grid-cols-2 gap-3">
                             <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
+                                    setError("");
                                     setForm((current) => ({
                                         ...current,
                                         mode: "SINGLE",
                                         to_branch_id: "",
-                                    }))
-                                }
+                                    }));
+                                }}
+                                onFocus={() => setError("")}
+                                disabled={hasNoStock}
                                 className={`rounded-2xl border px-4 py-3 text-sm font-extrabold ${
                                     !isAllBranches
                                         ? "border-[#1e4db7] bg-blue-50 text-[#0c2f73]"
                                         : "border-blue-100 text-[#6f85a3] hover:bg-[#f8fcff]"
-                                }`}
+                                } disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400`}
                             >
                                 Single Branch
                             </button>
                             <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
+                                    setError("");
                                     setForm((current) => ({
                                         ...current,
                                         mode: "ALL",
                                         to_branch_id: "",
-                                    }))
-                                }
+                                    }));
+                                }}
+                                onFocus={() => setError("")}
+                                disabled={hasNoStock}
                                 className={`rounded-2xl border px-4 py-3 text-sm font-extrabold ${
                                     isAllBranches
                                         ? "border-[#1e4db7] bg-blue-50 text-[#0c2f73]"
                                         : "border-blue-100 text-[#6f85a3] hover:bg-[#f8fcff]"
-                                }`}
+                                } disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400`}
                             >
                                 All Branches
                             </button>
@@ -1116,12 +1186,14 @@ function DistributionModal({ item, branches, form, setForm, onClose, onSubmit, l
                         <select
                             value={form.to_branch_id}
                             disabled={isAllBranches}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                                setError("");
                                 setForm((current) => ({
                                     ...current,
                                     to_branch_id: event.target.value,
-                                }))
-                            }
+                                }));
+                            }}
+                            onFocus={() => setError("")}
                             className="h-12 w-full rounded-2xl border border-blue-100 px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7] disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
                         >
                             <option value="">{isAllBranches ? `All ${branches.length} branches selected` : "Select branch"}</option>
@@ -1141,16 +1213,26 @@ function DistributionModal({ item, branches, form, setForm, onClose, onSubmit, l
                             type="number"
                             min="1"
                             max={maxQuantityPerBranch}
+                            disabled={hasNoStock}
                             value={form.quantity}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                                setError("");
                                 setForm((current) => ({
                                     ...current,
                                     quantity: event.target.value,
-                                }))
-                            }
+                                }));
+                            }}
+                            onFocus={() => setError("")}
                             placeholder="Enter quantity"
-                            className="h-12 w-full rounded-2xl border border-blue-100 px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7]"
+                            className={`h-12 w-full rounded-2xl border px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7] disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 ${
+                                displayError ? "border-red-200 bg-red-50/30" : "border-blue-100"
+                            }`}
                         />
+                        {displayError && (
+                            <div className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+                                {displayError}
+                            </div>
+                        )}
                     </label>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1175,8 +1257,8 @@ function DistributionModal({ item, branches, form, setForm, onClose, onSubmit, l
                     <button
                         type="button"
                         onClick={onSubmit}
-                        disabled={loading}
-                        className="rounded-2xl bg-green-600 py-4 font-extrabold text-white hover:bg-green-700 disabled:cursor-wait disabled:bg-gray-300"
+                        disabled={disableSubmit}
+                        className="rounded-2xl bg-green-600 py-4 font-extrabold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                     >
                         {loading ? "Distributing..." : "Create Distribution"}
                     </button>
@@ -1292,6 +1374,58 @@ function EmptyRow({ colSpan, text }) {
 function paginate(items, page) {
     const start = (page - 1) * ROWS_PER_PAGE;
     return items.slice(start, start + ROWS_PER_PAGE);
+}
+
+function sortTransfers(items, sortMode) {
+    const sorted = [...items];
+
+    sorted.sort((a, b) => {
+        if (sortMode === "UPDATED_ASC") {
+            return compareDateValues(getTransferUpdatedAt(a), getTransferUpdatedAt(b), "ASC");
+        }
+
+        if (sortMode === "TRANSFER_DESC") {
+            return compareDateValues(a.transfer_date, b.transfer_date, "DESC");
+        }
+
+        if (sortMode === "TRANSFER_ASC") {
+            return compareDateValues(a.transfer_date, b.transfer_date, "ASC");
+        }
+
+        if (sortMode === "STATUS") {
+            return `${a.status || ""}`.localeCompare(`${b.status || ""}`) ||
+                compareDateValues(getTransferUpdatedAt(a), getTransferUpdatedAt(b), "DESC");
+        }
+
+        return compareDateValues(getTransferUpdatedAt(a), getTransferUpdatedAt(b), "DESC");
+    });
+
+    return sorted;
+}
+
+function getTransferUpdatedAt(transfer) {
+    return transfer.approved_at || transfer.transfer_date;
+}
+
+function compareDateValues(firstValue, secondValue, direction) {
+    const firstTime = getDateTime(firstValue);
+    const secondTime = getDateTime(secondValue);
+    const multiplier = direction === "ASC" ? 1 : -1;
+
+    if (firstTime === secondTime) return 0;
+    if (firstTime === null) return 1;
+    if (secondTime === null) return -1;
+
+    return firstTime > secondTime ? multiplier : -multiplier;
+}
+
+function getDateTime(value) {
+    if (!value) return null;
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+
+    return date.getTime();
 }
 
 function formatDateTime(dateValue) {

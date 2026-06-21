@@ -6,6 +6,7 @@ import {
     ClipboardList,
     Info,
     PackageSearch,
+    PackagePlus,
     Search,
     TrendingUp,
     Warehouse,
@@ -38,6 +39,12 @@ export default function InventoryOverview() {
     const [selectedProduct, setSelectedProduct] = useState(null);
     const [selectedRecommendation, setSelectedRecommendation] = useState(null);
     const [selectedTransferDetails, setSelectedTransferDetails] = useState(null);
+    const [arrangeTransferItem, setArrangeTransferItem] = useState(null);
+    const [arrangeTransferForm, setArrangeTransferForm] = useState({
+        source_branch_id: "",
+        quantity: "",
+    });
+    const [arrangingTransfer, setArrangingTransfer] = useState(false);
     const [transferDetailLoading, setTransferDetailLoading] = useState(null);
     const [updatingReorderProductId, setUpdatingReorderProductId] = useState(null);
     const [toast, setToast] = useState(null);
@@ -259,6 +266,107 @@ export default function InventoryOverview() {
         setSelectedProduct(productDistribution[Number(item.product_id)] || null);
     };
 
+    const openArrangeTransfer = (item) => {
+        const suggestedQuantity = Math.max(
+            Number(item.reorder_level || 0) - Number(item.quantity_in_stock || 0),
+            1
+        );
+        setArrangeTransferItem(item);
+        setArrangeTransferForm({
+            source_branch_id: "",
+            quantity: String(suggestedQuantity),
+        });
+    };
+
+    const arrangeSourceOptions = useMemo(() => {
+        if (!arrangeTransferItem) return [];
+
+        return stockRows
+            .filter((item) =>
+                Number(item.product_id) === Number(arrangeTransferItem.product_id) &&
+                Number(item.branch_id) !== Number(arrangeTransferItem.branch_id) &&
+                Number(item.quantity_in_stock || 0) > 0
+            )
+            .sort((a, b) => {
+                if (a.branch_type !== b.branch_type) {
+                    return a.branch_type === "WAREHOUSE" ? -1 : 1;
+                }
+                return Number(b.quantity_in_stock || 0) - Number(a.quantity_in_stock || 0);
+            });
+    }, [arrangeTransferItem, stockRows]);
+
+    const selectedArrangeSource = arrangeSourceOptions.find(
+        (item) => Number(item.branch_id) === Number(arrangeTransferForm.source_branch_id)
+    );
+
+    const submitArrangeTransfer = async () => {
+        if (!arrangeTransferItem) return;
+
+        if (!arrangeTransferForm.source_branch_id) {
+            showToast("Select a source location.", "error");
+            return;
+        }
+
+        const quantity = Number(arrangeTransferForm.quantity);
+        if (!quantity || quantity <= 0) {
+            showToast("Quantity must be greater than 0.", "error");
+            return;
+        }
+
+        if (selectedArrangeSource && quantity > Number(selectedArrangeSource.quantity_in_stock || 0)) {
+            showToast("Quantity cannot exceed source stock.", "error");
+            return;
+        }
+
+        const sourceType = selectedArrangeSource?.branch_type;
+        const path = sourceType === "WAREHOUSE"
+            ? "/admin/warehouse/distribute"
+            : "/admin/stock-transfer/request";
+
+        const payload = sourceType === "WAREHOUSE"
+            ? {
+                  from_branch_id: Number(arrangeTransferForm.source_branch_id),
+                  to_branch_id: Number(arrangeTransferItem.branch_id),
+                  product_id: Number(arrangeTransferItem.product_id),
+                  quantity,
+                  approved_by: Number(user.user_id),
+              }
+            : {
+                  from_branch_id: Number(arrangeTransferForm.source_branch_id),
+                  to_branch_id: Number(arrangeTransferItem.branch_id),
+                  requested_by: Number(user.user_id),
+                  items: [{
+                      product_id: Number(arrangeTransferItem.product_id),
+                      quantity,
+                  }],
+              };
+
+        try {
+            setArrangingTransfer(true);
+            const res = await fetch(`${API}${path}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                showToast(data.message || "Failed to arrange stock transfer.", "error");
+                return;
+            }
+
+            setArrangeTransferItem(null);
+            setArrangeTransferForm({ source_branch_id: "", quantity: "" });
+            showToast(data.message || "Stock transfer arranged successfully.");
+            fetchData();
+        } catch (error) {
+            console.error(error);
+            showToast("Failed to arrange stock transfer.", "error");
+        } finally {
+            setArrangingTransfer(false);
+        }
+    };
+
     const openTransferDetails = async (transferId) => {
         try {
             setTransferDetailLoading(transferId);
@@ -396,7 +504,7 @@ export default function InventoryOverview() {
                     badgeTone="blue"
                 >
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1040px] border-separate border-spacing-0 text-left text-sm">
+                        <table className="w-full min-w-[1160px] border-separate border-spacing-0 text-left text-sm">
                             <thead className="sticky top-0 z-10 bg-white">
                                 <tr className="border-b text-[#6f85a3]">
                                     <th className="border-b py-3 pr-5 text-xs font-extrabold uppercase">Product Code</th>
@@ -406,7 +514,7 @@ export default function InventoryOverview() {
                                     <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Current Quantity</th>
                                     <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Reorder Level</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Status</th>
-                                    <th className="border-b pl-5 text-right text-xs font-extrabold uppercase">Info</th>
+                                    <th className="border-b pl-5 text-right text-xs font-extrabold uppercase">Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -442,6 +550,16 @@ export default function InventoryOverview() {
                                                 <StockStatusBadge status={item.stock_status} />
                                             </td>
                                             <td className="border-b border-blue-50 pl-5 text-right">
+                                                {item.branch_type !== "WAREHOUSE" && item.stock_status !== "HEALTHY" && (
+                                                    <button
+                                                        onClick={() => openArrangeTransfer(item)}
+                                                        className="mr-2 inline-flex h-9 items-center gap-2 rounded-xl bg-[#0c2f73] px-3 text-xs font-extrabold text-white hover:bg-[#103986]"
+                                                        title="Arrange stock transfer"
+                                                    >
+                                                        <PackagePlus size={15} />
+                                                        Arrange
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={() => openProductDistribution(item)}
                                                     className="inline-grid h-9 w-9 place-items-center rounded-xl bg-[#eef6fb] text-[#1e4db7] hover:bg-blue-100"
@@ -639,6 +757,19 @@ export default function InventoryOverview() {
                 />
             )}
 
+            {arrangeTransferItem && (
+                <ArrangeTransferModal
+                    item={arrangeTransferItem}
+                    sources={arrangeSourceOptions}
+                    selectedSource={selectedArrangeSource}
+                    form={arrangeTransferForm}
+                    setForm={setArrangeTransferForm}
+                    loading={arrangingTransfer}
+                    onClose={() => setArrangeTransferItem(null)}
+                    onSubmit={submitArrangeTransfer}
+                />
+            )}
+
             {selectedRecommendation && (
                 <RecommendationModal
                     item={selectedRecommendation}
@@ -818,6 +949,7 @@ function StockStatusBadge({ status }) {
 function TransferStatusBadge({ status }) {
     const styles = {
         PENDING: "bg-orange-50 text-orange-700",
+        PENDING_SOURCE: "bg-purple-50 text-purple-700",
         APPROVED: "bg-blue-50 text-[#1e4db7]",
         REJECTED: "bg-red-50 text-red-700",
         RECEIVED: "bg-green-50 text-green-700",
@@ -926,6 +1058,131 @@ function ProductDistributionModal({ product, onClose }) {
                             className="rounded-2xl bg-[#0c2f73] px-6 py-3 text-sm font-extrabold text-white hover:bg-[#103986]"
                         >
                             Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ArrangeTransferModal({
+    item,
+    sources,
+    selectedSource,
+    form,
+    setForm,
+    loading,
+    onClose,
+    onSubmit,
+}) {
+    const quantity = Number(form.quantity || 0);
+    const sourceStock = Number(selectedSource?.quantity_in_stock || 0);
+    const overSourceStock = selectedSource && quantity > sourceStock;
+    const sourceTypeLabel = selectedSource?.branch_type === "WAREHOUSE" ? "Warehouse" : "Branch";
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+            <div className="custom-scrollbar max-h-[90vh] w-full max-w-[720px] overflow-y-auto rounded-3xl bg-white shadow-2xl">
+                <ModalHeader
+                    icon={<PackagePlus size={25} />}
+                    title="Arrange Stock Transfer"
+                    subtitle={`${item.product_name} for ${item.branch_name}`}
+                    onClose={onClose}
+                />
+
+                <div className="space-y-5 p-7">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <InfoRow label="Destination Branch" value={item.branch_name || "-"} />
+                        <InfoRow label="Current Quantity" value={`${item.quantity_in_stock ?? 0} units`} />
+                        <InfoRow label="Reorder Level" value={`${item.reorder_level ?? 0} units`} />
+                        <InfoRow label="Status" value={<StockStatusBadge status={item.stock_status} />} />
+                    </div>
+
+                    <label className="block">
+                        <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            Source Location
+                        </span>
+                        <select
+                            value={form.source_branch_id}
+                            onChange={(event) =>
+                                setForm((current) => ({
+                                    ...current,
+                                    source_branch_id: event.target.value,
+                                }))
+                            }
+                            className="h-12 w-full rounded-2xl border border-blue-100 px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7]"
+                        >
+                            <option value="">Select source with available stock</option>
+                            {sources.map((source) => (
+                                <option key={source.branch_id} value={source.branch_id}>
+                                    {source.branch_name} ({source.branch_type === "WAREHOUSE" ? "Warehouse" : "Branch"}) - Stock: {source.quantity_in_stock}
+                                </option>
+                            ))}
+                        </select>
+                        {sources.length === 0 && (
+                            <p className="mt-2 text-sm font-bold text-red-600">
+                                No warehouse or branch has available stock for this product.
+                            </p>
+                        )}
+                    </label>
+
+                    <label className="block">
+                        <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            Transfer Quantity
+                        </span>
+                        <input
+                            type="number"
+                            min="1"
+                            max={selectedSource ? sourceStock : undefined}
+                            value={form.quantity}
+                            onChange={(event) =>
+                                setForm((current) => ({
+                                    ...current,
+                                    quantity: event.target.value,
+                                }))
+                            }
+                            className={`h-12 w-full rounded-2xl border px-4 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7] ${
+                                overSourceStock ? "border-red-200 bg-red-50/40" : "border-blue-100"
+                            }`}
+                        />
+                        {overSourceStock && (
+                            <p className="mt-2 text-sm font-bold text-red-600">
+                                Quantity cannot exceed selected source stock.
+                            </p>
+                        )}
+                    </label>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <InfoRow label="Selected Source" value={selectedSource?.branch_name || "-"} />
+                        <InfoRow label="Source Type" value={selectedSource ? sourceTypeLabel : "-"} />
+                        <InfoRow label="Source Stock" value={selectedSource ? `${sourceStock} units` : "-"} />
+                        <InfoRow
+                            label="Source After Transfer"
+                            value={selectedSource && quantity ? `${Math.max(sourceStock - quantity, 0)} units` : "-"}
+                        />
+                    </div>
+
+                    <div className="rounded-2xl bg-[#f8fcff] p-4 text-sm font-semibold text-[#6f85a3]">
+                        Warehouse source creates an approved transfer for branch receiving. Branch source sends the request to that source manager for approval.
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            disabled={loading}
+                            className="rounded-2xl bg-[#eef6fb] py-4 font-extrabold text-[#17325c] hover:bg-blue-100 disabled:opacity-60"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onSubmit}
+                            disabled={loading || !selectedSource || !quantity || quantity <= 0 || overSourceStock}
+                            className="rounded-2xl bg-[#0c2f73] py-4 font-extrabold text-white hover:bg-[#103986] disabled:cursor-not-allowed disabled:bg-gray-300"
+                        >
+                            {loading ? "Arranging..." : "Arrange Transfer"}
                         </button>
                     </div>
                 </div>

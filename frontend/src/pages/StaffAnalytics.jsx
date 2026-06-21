@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ShoppingCart,
   BarChart3,
+  History,
   User,
   LogOut,
   Bell,
@@ -259,7 +260,7 @@ export default function StaffAnalytics() {
     return stockTransfers.some(
       (transfer) =>
         Number(transfer.to_branch_id) === Number(user?.branch_id) &&
-        transfer.status === "PENDING" &&
+        ["PENDING", "PENDING_SOURCE", "APPROVED"].includes(transfer.status) &&
         Array.isArray(transfer.product_ids) &&
         transfer.product_ids.some((id) => Number(id) === Number(productId))
     );
@@ -421,6 +422,15 @@ export default function StaffAnalytics() {
             >
               <BarChart3 size={18} />
               {!!sidebarOpen && <span>Analytics</span>}
+            </button>
+
+            <button
+              onClick={() => navigate("/staff", { state: { openSalesHistory: true } })}
+              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 font-semibold text-[#254e7a] transition-all duration-300 hover:-translate-y-1 hover:bg-white/70 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+                }`}
+            >
+              <History size={18} />
+              {!!sidebarOpen && <span>Sales History</span>}
             </button>
 
           </nav>

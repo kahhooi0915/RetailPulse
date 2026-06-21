@@ -244,10 +244,6 @@ export default function AdminDashboard() {
     .sort((a, b) => Number(b.revenue || 0) - Number(a.revenue || 0))
     .slice(0, 5);
 
-  const bottom5Branches = [...branchesWithSales]
-    .sort((a, b) => Number(a.revenue || 0) - Number(b.revenue || 0))
-    .slice(0, 5);
-
   const branchSalesPieData = top5Branches.map((branch) => ({
     name: branch.branch_name.replace("RetailPulse ", ""),
     value: Number(branch.revenue || 0),
@@ -453,7 +449,7 @@ export default function AdminDashboard() {
             />
             <DashboardActionButton
               icon={FileDown}
-              label={isPdfGenerating ? "Generating PDF..." : "Export Summary PDF"}
+              label={isPdfGenerating ? "Generating PDF..." : "Download as PDF"}
               onClick={handleExportSummaryPdf}
               disabled={isPdfGenerating || loading}
               primary
@@ -659,23 +655,6 @@ export default function AdminDashboard() {
                     colors={["#ef4444", "#1e4db7"]}
                   />
                 </div>
-              </div>
-            </section>
-
-            <section>
-              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-extrabold text-[#07102f]">
-                  Lowest Performing Sales Branches
-                </h2>
-                <p className="mt-1 text-sm text-[#6f85a3]">
-                  Bottom 5 sales branches with the lowest revenue.
-                </p>
-
-                <BranchRevenueBarChart
-                  branches={bottom5Branches}
-                  formatCurrency={formatCurrency}
-                  barColor="#ef4444"
-                />
               </div>
             </section>
 

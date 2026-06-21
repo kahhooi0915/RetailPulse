@@ -36,3 +36,16 @@ def get_actor_user_id(data=None):
             if data.get(key):
                 return data.get(key)
     return None
+
+
+def set_audit_context(cur, user_id):
+    if not user_id:
+        return
+
+    for setting_name in (
+        "app.current_user_id",
+        "app.user_id",
+        "retailpulse.current_user_id",
+        "retailpulse.user_id",
+    ):
+        cur.execute("SELECT set_config(%s, %s, true)", (setting_name, str(user_id)))

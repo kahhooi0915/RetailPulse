@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, Mail, Lock, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Mail, Lock, ShieldCheck } from "lucide-react";
 import api from "../api/axios";
 import setFavicon from "../utils/setFavicon";
 import retailBg from "../assets/retail-bg.jpg";
@@ -11,7 +11,6 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [remember, setRemember] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
@@ -38,7 +37,7 @@ export default function Login() {
           navigate("/manager-dashboard");
         }
       }, 700);
-    } catch (err) {
+    } catch {
       setError("Invalid email or password");
     }
   };
@@ -144,36 +143,34 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <label className="flex cursor-pointer items-center gap-3 text-xs font-medium text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 bg-white text-blue-600 accent-blue-600 focus:ring-blue-200"
-                />
-                Remember this device
-              </label>
-            </div>
-
             {error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
                 {error}
               </div>
             )}
 
-            <button className="group mt-2 w-full rounded-lg bg-gradient-to-r from-blue-700 to-blue-600 px-5 py-3.5 text-sm font-bold uppercase tracking-[0.14em] text-white shadow-lg shadow-blue-900/20 transition duration-300 hover:-translate-y-0.5 hover:from-blue-800 hover:to-blue-700 hover:shadow-blue-900/30 focus:outline-none focus:ring-4 focus:ring-blue-200">
-              <span className="inline-flex items-center justify-center gap-2">
+            <button className="group relative mt-2 w-full overflow-hidden rounded-lg bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 px-5 py-3.5 text-sm font-bold uppercase tracking-[0.14em] text-white shadow-lg shadow-blue-900/20 transition duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-blue-900/30 active:translate-y-0 focus:outline-none focus:ring-4 focus:ring-blue-200">
+              <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.3),transparent_34%)] opacity-0 transition duration-300 group-hover:opacity-100 group-focus-visible:opacity-100" />
+              <span className="pointer-events-none absolute -left-20 top-0 h-full w-14 -skew-x-12 bg-white/35 blur-sm transition-transform duration-700 group-hover:translate-x-[34rem] group-focus-visible:translate-x-[34rem]" />
+              <span className="relative inline-flex items-center justify-center gap-2">
                 Log In
-                <span className="transition duration-300 group-hover:translate-x-1">
-                  -&gt;
-                </span>
+                <ArrowRight
+                  size={18}
+                  strokeWidth={2.8}
+                  className="transition duration-300 group-hover:translate-x-1"
+                />
               </span>
             </button>
           </form>
 
           <p className="mt-7 text-center text-xs font-medium text-slate-500">
-            Need an account? Contact your administrator
+            Need an account?{" "}
+            <a
+              href="mailto:support@retailpulse.com?subject=Request%20for%20RetailPulse%20Account&body=Hello%20RetailPulse%20Support%2C%0A%0AI%20would%20like%20to%20request%20a%20new%20account.%0A%0AName%3A%20%0ABranch%3A%20%0ARole%20needed%3A%20%0AReason%3A%20%0A%0AThank%20you."
+              className="font-semibold text-blue-700 transition duration-300 hover:text-blue-900"
+            >
+              Contact support@retailpulse.com
+            </a>
           </p>
         </section>
       </main>

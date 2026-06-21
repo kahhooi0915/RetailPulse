@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search,
   Bell,
@@ -33,6 +33,7 @@ const API_BASE = "http://localhost:5000";
 const DEFAULT_PRODUCT_IMAGE_URL = `${API_BASE}/static/images/products/default.webp`;
 const HOLD_ORDERS_STORAGE_KEY = "holdOrders";
 const HOLD_ORDER_EXPIRY_MS = 3 * 60 * 60 * 1000;
+const SHOW_LEGACY_SALES_HISTORY_MODAL = false;
 
 const getStoredHoldOrders = () => {
   try {
@@ -61,21 +62,28 @@ const getActiveHoldOrders = () => {
   return activeOrders;
 };
 
-const formatHoldExpiry = (expiresAt) => {
-  const remainingMs = Math.max(Number(expiresAt || 0) - Date.now(), 0);
-  const remainingMinutes = Math.ceil(remainingMs / 60000);
-  const hours = Math.floor(remainingMinutes / 60);
-  const minutes = remainingMinutes % 60;
+const formatHoldExpiry = (expiresAt, currentTime = Date.now()) => {
+  const remainingMs = Math.max(Number(expiresAt || 0) - currentTime, 0);
+  const remainingSeconds = Math.ceil(remainingMs / 1000);
+  const hours = Math.floor(remainingSeconds / 3600);
+  const minutes = Math.floor((remainingSeconds % 3600) / 60);
+  const seconds = remainingSeconds % 60;
 
   if (hours > 0) {
-    return `Expires in ${hours}h ${minutes}m`;
+    return `Expires in ${hours}h ${minutes}m ${seconds}s`;
   }
 
-  return `Expires in ${remainingMinutes}m`;
+  if (minutes > 0) {
+    return `Expires in ${minutes}m ${seconds}s`;
+  }
+
+  return `Expires in ${seconds}s`;
 };
 
 export default function Staff() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const handledSalesHistoryRouteState = useRef(false);
 
   const [user, setUser] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -91,6 +99,7 @@ export default function Staff() {
   const [discountInput, setDiscountInput] = useState("");
   const [showHoldList, setShowHoldList] = useState(false);
   const [heldOrders, setHeldOrders] = useState([]);
+  const [holdCountdownNow, setHoldCountdownNow] = useState(Date.now());
   const [showSalesHistory, setShowSalesHistory] = useState(false);
   const [salesHistory, setSalesHistory] = useState([]);
   const [salesHistorySearch, setSalesHistorySearch] = useState("");
@@ -138,6 +147,21 @@ export default function Staff() {
     setUser(savedUser);
     fetchPOSData(savedUser);
   }, [navigate]);
+
+  useEffect(() => {
+    if (!showHoldList) return;
+
+    const updateHoldCountdown = () => {
+      const activeOrders = getActiveHoldOrders();
+      setHeldOrders(activeOrders);
+      setHoldCountdownNow(Date.now());
+    };
+
+    updateHoldCountdown();
+    const intervalId = setInterval(updateHoldCountdown, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [showHoldList]);
 
   const fetchPOSData = async (savedUser) => {
     try {
@@ -318,6 +342,22 @@ export default function Staff() {
 
   const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
 
+  const updateDiscountInput = (value) => {
+    const cleanedValue = value
+      .replace(/[^\d.]/g, "")
+      .replace(/(\..*)\./g, "$1");
+
+    if (cleanedValue === "") {
+      setDiscountInput("");
+      return;
+    }
+
+    if (!/^\d{0,3}(\.\d{0,2})?$/.test(cleanedValue)) return;
+    if (Number(cleanedValue) <= 100) {
+      setDiscountInput(cleanedValue);
+    }
+  };
+
   const discountPercent = Number(discountInput || 0);
   const discountAmount = subtotal * (discountPercent / 100);
   const discountedSubtotal = subtotal - discountAmount;
@@ -347,6 +387,7 @@ export default function Staff() {
 
   const openHoldList = () => {
     setHeldOrders(getActiveHoldOrders());
+    setHoldCountdownNow(Date.now());
     setShowHoldList(true);
   };
 
@@ -445,6 +486,51 @@ export default function Staff() {
     setShowSalesHistory(true);
     fetchSalesHistory();
   };
+
+  useEffect(() => {
+    if (
+      !user ||
+      !location.state?.openSalesHistory ||
+      handledSalesHistoryRouteState.current
+    ) {
+      return;
+    }
+
+    handledSalesHistoryRouteState.current = true;
+    setShowSalesHistory(true);
+
+    const fetchRouteSalesHistory = async () => {
+      if (!user?.branch_id) return;
+
+      try {
+        setLoadingSalesHistory(true);
+
+        const res = await fetch(`${API_BASE}/admin/sales`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          alert(data.message || "Failed to load sales history.");
+          return;
+        }
+
+        const branchSales = Array.isArray(data)
+          ? data
+              .filter((sale) => Number(sale.branch_id) === Number(user.branch_id))
+              .sort((a, b) => new Date(b.sale_date || 0) - new Date(a.sale_date || 0))
+          : [];
+
+        setSalesHistory(branchSales);
+      } catch (error) {
+        console.error(error);
+        alert("Failed to load sales history. Check backend connection.");
+      } finally {
+        setLoadingSalesHistory(false);
+      }
+    };
+
+    fetchRouteSalesHistory();
+    navigate(location.pathname, { replace: true, state: null });
+  }, [user, location.pathname, location.state, navigate]);
 
   const reprintSaleReceipt = async (sale) => {
     try {
@@ -623,8 +709,12 @@ export default function Staff() {
     >
       <div
         className={`grid h-full transition-all duration-300 ${sidebarOpen
-            ? "grid-cols-[230px_minmax(0,1fr)_330px]"
-            : "grid-cols-[86px_minmax(0,1fr)_330px]"
+            ? showSalesHistory
+              ? "grid-cols-[230px_minmax(0,1fr)]"
+              : "grid-cols-[230px_minmax(0,1fr)_330px]"
+            : showSalesHistory
+              ? "grid-cols-[86px_minmax(0,1fr)]"
+              : "grid-cols-[86px_minmax(0,1fr)_330px]"
           }`}
       >
 
@@ -675,7 +765,11 @@ export default function Staff() {
           <nav className="space-y-3">
             {/* POS Terminal */}
             <button
-              className={`flex w-full items-center rounded-2xl bg-white py-4 font-bold text-[#1e4db7] shadow transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+              onClick={() => setShowSalesHistory(false)}
+              className={`flex w-full items-center rounded-2xl py-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${showSalesHistory
+                  ? "bg-white/30 font-semibold text-[#254e7a] hover:bg-white/70"
+                  : "bg-white font-bold text-[#1e4db7] shadow"
+                } ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
                 }`}
             >
               <ShoppingCart size={18} />
@@ -694,7 +788,10 @@ export default function Staff() {
 
             <button
               onClick={openSalesHistory}
-              className={`flex w-full items-center rounded-2xl bg-white/30 py-4 font-semibold text-[#254e7a] transition-all duration-300 hover:-translate-y-1 hover:bg-white/70 hover:shadow-lg ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
+              className={`flex w-full items-center rounded-2xl py-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${showSalesHistory
+                  ? "bg-white font-bold text-[#1e4db7] shadow"
+                  : "bg-white/30 font-semibold text-[#254e7a] hover:bg-white/70"
+                } ${!sidebarOpen ? "justify-center px-0" : "gap-4 px-4"
                 }`}
             >
               <History size={18} />
@@ -715,9 +812,20 @@ export default function Staff() {
             <div className="ml-auto flex h-[60px] w-full max-w-[700px] flex-1 items-center gap-3 rounded-full bg-[#e8f4fb] px-6 shadow-md">
               <Search size={20} className="text-[#0d2d6c]" />
               <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search SKU or Product..."
+                value={showSalesHistory ? salesHistorySearch : searchTerm}
+                onChange={(e) => {
+                  if (showSalesHistory) {
+                    setSalesHistorySearch(e.target.value);
+                    return;
+                  }
+
+                  setSearchTerm(e.target.value);
+                }}
+                placeholder={
+                  showSalesHistory
+                    ? "Search receipt, cashier, or payment..."
+                    : "Search SKU or Product..."
+                }
                 className="h-full w-full bg-transparent text-base font-medium outline-none placeholder:text-[#86a2bc]"
               />
             </div>
@@ -766,20 +874,108 @@ export default function Staff() {
 
           </header>
 
-          {/* CATEGORIES */}
-          <section className="mb-5 flex gap-3 overflow-x-auto pb-3">
-            <button
-              onClick={() => setActiveCategory("ALL")}
-              className={`whitespace-nowrap rounded-full px-7 py-3 text-sm font-bold ${
-                activeCategory === "ALL"
-                  ? "bg-[#0c2f73] text-white shadow"
-                  : "bg-[#dcf0f9] text-[#1f4e77]"
-              }`}
-            >
-              All Products
-            </button>
+          {showSalesHistory ? (
+            <section className="pb-6">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h1 className="text-3xl font-extrabold text-[#07102f]">
+                    Sales History
+                  </h1>
+                  <p className="mt-1 text-sm font-semibold text-[#6f85a3]">
+                    {user?.branch_name || "Branch"}
+                  </p>
+                </div>
 
-            {categories.map((category) => (
+                <button
+                  onClick={() => fetchSalesHistory()}
+                  className="flex items-center gap-2 rounded-full bg-[#0c2f73] px-5 py-3 text-sm font-extrabold text-white shadow hover:bg-[#103986]"
+                >
+                  <History size={16} />
+                  Refresh
+                </button>
+              </div>
+
+              <div className="min-h-[520px] rounded-[20px] bg-white p-5 shadow-sm">
+                {loadingSalesHistory ? (
+                  <div className="grid min-h-[420px] place-items-center text-center text-[#8ba3bc]">
+                    <div>
+                      <ReceiptText size={42} className="mx-auto mb-3" />
+                      <p>Loading sales history...</p>
+                    </div>
+                  </div>
+                ) : filteredSalesHistory.length === 0 ? (
+                  <div className="grid min-h-[420px] place-items-center text-center text-[#8ba3bc]">
+                    <div>
+                      <ReceiptText size={42} className="mx-auto mb-3" />
+                      <p>No sales records found.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredSalesHistory.map((sale) => {
+                      const saleDate = sale.sale_date ? new Date(sale.sale_date) : null;
+
+                      return (
+                        <div
+                          key={sale.sale_id}
+                          className="grid grid-cols-[1fr_auto] gap-4 rounded-2xl border border-[#e4eef7] bg-[#f8fbfe] p-4"
+                        >
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-extrabold text-[#07102f]">
+                                #{sale.sale_code || `RP-${sale.sale_id}`}
+                              </h3>
+                              <span className="rounded-full bg-[#dff3fb] px-3 py-1 text-xs font-extrabold text-[#0c2f73]">
+                                {sale.payment_method || "N/A"}
+                              </span>
+                            </div>
+
+                            <p className="mt-2 text-sm font-semibold text-[#526b86]">
+                              {sale.user_name || "Cashier"} |{" "}
+                              {saleDate
+                                ? `${saleDate.toLocaleDateString()} ${saleDate.toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}`
+                                : "Date unavailable"}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col items-end justify-between gap-3">
+                            <strong className="text-lg text-orange-600">
+                              {formatCurrency(sale.total_amount)}
+                            </strong>
+                            <button
+                              onClick={() => reprintSaleReceipt(sale)}
+                              className="flex items-center gap-2 rounded-full bg-[#0c2f73] px-4 py-2 text-sm font-extrabold text-white hover:bg-[#103986]"
+                            >
+                              <Printer size={15} />
+                              Reprint
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : (
+            <>
+              {/* CATEGORIES */}
+              <section className="mb-5 flex gap-3 overflow-x-auto pb-3">
+                <button
+                  onClick={() => setActiveCategory("ALL")}
+                  className={`whitespace-nowrap rounded-full px-7 py-3 text-sm font-bold ${
+                    activeCategory === "ALL"
+                      ? "bg-[#0c2f73] text-white shadow"
+                      : "bg-[#dcf0f9] text-[#1f4e77]"
+                  }`}
+                >
+                  All Products
+                </button>
+
+                {categories.map((category) => (
               <button
                 key={category.category_id}
                 onClick={() => setActiveCategory(category.category_id)}
@@ -791,96 +987,99 @@ export default function Staff() {
               >
                 {category.category_name}
               </button>
-            ))}
-          </section>
+                ))}
+              </section>
 
-          {/* PRODUCTS */}
-          <section className="grid grid-cols-[repeat(auto-fill,minmax(235px,1fr))] gap-5 pb-6">
-            {filteredProducts.length === 0 ? (
-              <div className="col-span-full grid min-h-[280px] place-items-center text-[#8ba3bc]">
-                <div className="text-center">
-                  <Package size={40} className="mx-auto mb-3" />
-                  <p>No products found.</p>
-                </div>
-              </div>
-            ) : (
-                filteredProducts.map((product) => {
-                  const isOutOfStock = product.quantity_in_stock === 0;
-                  const isLowStock =
-                    product.quantity_in_stock > 0 &&
-                    product.quantity_in_stock <= product.reorder_level;
+              {/* PRODUCTS */}
+              <section className="grid grid-cols-[repeat(auto-fill,minmax(235px,1fr))] gap-5 pb-6">
+                {filteredProducts.length === 0 ? (
+                  <div className="col-span-full grid min-h-[280px] place-items-center text-[#8ba3bc]">
+                    <div className="text-center">
+                      <Package size={40} className="mx-auto mb-3" />
+                      <p>No products found.</p>
+                    </div>
+                  </div>
+                ) : (
+                    filteredProducts.map((product) => {
+                      const isOutOfStock = product.quantity_in_stock === 0;
+                      const isLowStock =
+                        product.quantity_in_stock > 0 &&
+                        product.quantity_in_stock <= product.reorder_level;
 
-                  return (
-                    <article
-                      key={product.product_id}
-                      onClick={() => {
-                        if (!isOutOfStock) {
-                          addToCart(product);
-                        }
-                      }}
-                      className={`overflow-hidden rounded-[20px] shadow-sm transition ${isOutOfStock
-                          ? "cursor-not-allowed bg-gray-100 opacity-70"
-                          : "cursor-pointer bg-white hover:-translate-y-1 hover:shadow-xl"
-                        }`}
-                    >
-                      <div className="relative h-[180px] overflow-hidden bg-slate-100">
-                        <img
-                          src={getImageUrl(product.product_image)}
-                          alt={product.product_name}
-                          onError={handleProductImageError}
-                          className={`h-full w-full object-cover transition ${isOutOfStock ? "grayscale" : "hover:scale-105"
+                      return (
+                        <article
+                          key={product.product_id}
+                          onClick={() => {
+                            if (!isOutOfStock) {
+                              addToCart(product);
+                            }
+                          }}
+                          className={`overflow-hidden rounded-[20px] shadow-sm transition ${isOutOfStock
+                              ? "cursor-not-allowed bg-gray-100 opacity-70"
+                              : "cursor-pointer bg-white hover:-translate-y-1 hover:shadow-xl"
                             }`}
-                        />
+                        >
+                          <div className="relative h-[180px] overflow-hidden bg-slate-100">
+                            <img
+                              src={getImageUrl(product.product_image)}
+                              alt={product.product_name}
+                              onError={handleProductImageError}
+                              className={`h-full w-full object-cover transition ${isOutOfStock ? "grayscale" : "hover:scale-105"
+                                }`}
+                            />
 
-                        {isOutOfStock && (
-                          <div className="absolute inset-0 grid place-items-center bg-black/20">
-                            <span className="rounded-full bg-white px-4 py-2 text-xs font-extrabold text-gray-700">
-                              OUT OF STOCK
+                            {isOutOfStock && (
+                              <div className="absolute inset-0 grid place-items-center bg-black/20">
+                                <span className="rounded-full bg-white px-4 py-2 text-xs font-extrabold text-gray-700">
+                                  OUT OF STOCK
+                                </span>
+                              </div>
+                            )}
+
+                            <span className="absolute right-3 top-3 rounded-full bg-white/95 px-3 py-1 text-[10px] font-extrabold uppercase text-[#23557e]">
+                              {product.category_name}
                             </span>
                           </div>
-                        )}
 
-                        <span className="absolute right-3 top-3 rounded-full bg-white/95 px-3 py-1 text-[10px] font-extrabold uppercase text-[#23557e]">
-                          {product.category_name}
-                        </span>
-                      </div>
+                          <div className="px-4 py-4">
+                            <h3 className="min-h-[42px] text-base font-extrabold leading-snug text-[#132c51]">
+                              {product.product_name}
+                            </h3>
 
-                      <div className="px-4 py-4">
-                        <h3 className="min-h-[42px] text-base font-extrabold leading-snug text-[#132c51]">
-                          {product.product_name}
-                        </h3>
+                            <p className="mt-1 text-xs text-[#6f8aaa]">
+                              SKU: {product.product_code}
+                            </p>
 
-                        <p className="mt-1 text-xs text-[#6f8aaa]">
-                          SKU: {product.product_code}
-                        </p>
+                            <div className="mt-4 flex items-center justify-between gap-2">
+                              <strong className="text-lg font-extrabold text-[#103a72]">
+                                {formatCurrency(product.selling_price)}
+                              </strong>
 
-                        <div className="mt-4 flex items-center justify-between gap-2">
-                          <strong className="text-lg font-extrabold text-[#103a72]">
-                            {formatCurrency(product.selling_price)}
-                          </strong>
-
-                          <span
-                            className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold ${isOutOfStock
-                                ? "bg-gray-200 text-gray-600"
-                                : isLowStock
-                                  ? "bg-orange-100 text-orange-600"
-                                  : "bg-[#e2f0f5] text-[#4c7891]"
-                              }`}
-                          >
-                            {isOutOfStock
-                              ? "Out of Stock"
-                              : `${product.quantity_in_stock} in stock`}
-                          </span>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })
-            )}
-          </section>
+                              <span
+                                className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold ${isOutOfStock
+                                    ? "bg-gray-200 text-gray-600"
+                                    : isLowStock
+                                      ? "bg-orange-100 text-orange-600"
+                                      : "bg-[#e2f0f5] text-[#4c7891]"
+                                  }`}
+                              >
+                                {isOutOfStock
+                                  ? "Out of Stock"
+                                  : `${product.quantity_in_stock} in stock`}
+                              </span>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })
+                )}
+              </section>
+            </>
+          )}
         </motion.main>
 
         {/* CART */}
+        {!showSalesHistory && (
         <aside className="flex min-w-0 flex-col bg-white px-5 py-6 border-l border-blue-100">
           <div className="mb-6 flex items-center justify-between border-b-2 border-[#ecf3f9] pb-4">
             <h2 className="text-2xl font-extrabold text-[#17325c]">
@@ -1019,6 +1218,7 @@ export default function Staff() {
             </div>
           </div>
         </aside>
+        )}
       </div>
 
       {toast.show && (
@@ -1138,8 +1338,21 @@ export default function Staff() {
                 </button>
             </div>
 
-            <div className="mb-5 rounded-2xl bg-[#d8eef9] px-5 py-4 text-right text-3xl font-extrabold text-[#0c2f73]">
-                {discountInput || "0"}%
+            <div className="mb-5 flex items-center rounded-2xl bg-[#d8eef9] px-5 py-4 text-[#0c2f73]">
+                <input
+                autoFocus
+                inputMode="decimal"
+                value={discountInput}
+                onChange={(event) => updateDiscountInput(event.target.value)}
+                onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                    setShowDiscountPad(false);
+                    }
+                }}
+                placeholder="0"
+                className="min-w-0 flex-1 bg-transparent text-right text-3xl font-extrabold outline-none placeholder:text-[#6f85a3]"
+                />
+                <span className="ml-2 text-3xl font-extrabold">%</span>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -1186,6 +1399,7 @@ export default function Staff() {
             </div>
 
             <button
+                type="button"
                 onClick={() => setShowDiscountPad(false)}
                 className="mt-5 w-full rounded-full bg-[#0c2f73] py-4 font-extrabold text-white"
             >
@@ -1251,7 +1465,7 @@ export default function Staff() {
                             </p>
 
                             <p className="mb-3 text-sm font-semibold text-[#254e7a]">
-                            {formatHoldExpiry(order.expiresAt)}
+                            {formatHoldExpiry(order.expiresAt, holdCountdownNow)}
                             </p>
 
                             <div className="grid grid-cols-2 gap-3">
@@ -1325,7 +1539,7 @@ export default function Staff() {
             </div>
         )}
 
-    {showSalesHistory && (
+    {SHOW_LEGACY_SALES_HISTORY_MODAL && showSalesHistory && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
         <div className="flex max-h-[86vh] w-[720px] flex-col rounded-3xl bg-white p-6 shadow-2xl">
           <div className="mb-5 flex items-center justify-between">

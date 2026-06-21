@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Bell,
@@ -15,12 +15,11 @@ export default function ManagerBranchInventory() {
     const navigate = useNavigate();
 
     const [toast, setToast] = useState(null);
-    const [user, setUser] = useState(null);
+    const [user] = useState(() => JSON.parse(sessionStorage.getItem("user")));
     const [inventory, setInventory] = useState([]);
     const [search, setSearch] = useState("");
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
-    const [products, setProducts] = useState([]);
     const [transfers, setTransfers] = useState([]);
     const [transferItems, setTransferItems] = useState({});
 
@@ -33,26 +32,7 @@ export default function ManagerBranchInventory() {
     const [suggestionModal, setSuggestionModal] = useState(null);
     const [creatingTransfer, setCreatingTransfer] = useState(false);
 
-    useEffect(() => {
-        const savedUser = JSON.parse(sessionStorage.getItem("user"));
-
-        if (!savedUser) {
-            navigate("/");
-            return;
-        }
-
-        setUser(savedUser);
-        fetchInventory(savedUser.branch_id);
-    }, [navigate]);
-
-    useEffect(() => {
-        if (toast) {
-            const timer = setTimeout(() => setToast(null), 3000);
-            return () => clearTimeout(timer);
-        }
-    }, [toast]);
-
-    const fetchInventory = async (branchId) => {
+    const fetchInventory = useCallback(async (branchId) => {
         try {
             const [invRes, productRes, transferRes] = await Promise.all([
                 fetch(`${API_BASE}/admin/inventory`),
@@ -81,8 +61,6 @@ export default function ManagerBranchInventory() {
             );
 
             setTransferItems(itemsMap);
-            setProducts(Array.isArray(productData) ? productData : []);
-
             const branchData = Array.isArray(invData)
                 ? invData
                     .filter((item) => Number(item.branch_id) === Number(branchId))
@@ -103,7 +81,24 @@ export default function ManagerBranchInventory() {
             console.error(err);
             alert("Failed to load inventory");
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        if (!user) {
+            navigate("/");
+            return;
+        }
+
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        fetchInventory(user.branch_id);
+    }, [fetchInventory, navigate, user]);
+
+    useEffect(() => {
+        if (toast) {
+            const timer = setTimeout(() => setToast(null), 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [toast]);
 
     const logout = () => {
         sessionStorage.removeItem("user");
@@ -114,16 +109,19 @@ export default function ManagerBranchInventory() {
         item.product_name.toLowerCase().includes(search.toLowerCase())
     );
 
+    const activeTransferStatuses = ["PENDING", "PENDING_SOURCE", "APPROVED"];
+
     const hasExistingTransferRequest = (productId) => {
         return transfers.some((transfer) => {
             const isForThisBranch =
                 Number(transfer.to_branch_id) === Number(user?.branch_id);
 
-            const isActive =
-                transfer.status === "PENDING" || transfer.status === "APPROVED";
+            const isActive = activeTransferStatuses.includes(transfer.status);
 
             const hasProduct = transferItems[transfer.transfer_id]?.some(
                 (item) => Number(item.product_id) === Number(productId)
+            ) || transfer.product_ids?.some(
+                (id) => Number(id) === Number(productId)
             );
 
             return isForThisBranch && isActive && hasProduct;
@@ -135,6 +133,7 @@ export default function ManagerBranchInventory() {
             .filter((inv) =>
                 Number(inv.product_id) === Number(item.product_id) &&
                 Number(inv.branch_id) !== Number(user.branch_id) &&
+                inv.branch_status !== "INACTIVE" &&
                 Number(inv.quantity_in_stock) > Number(item.reorder_level)
             )
             .sort((a, b) => Number(b.quantity_in_stock) - Number(a.quantity_in_stock));
@@ -148,14 +147,25 @@ export default function ManagerBranchInventory() {
         }
 
         const sourceBranch = candidateBranches[0];
+        const reorderLevel = Number(item.reorder_level);
+        const currentStock = Number(item.quantity_in_stock);
+        const sourceSurplus = Number(sourceBranch.quantity_in_stock) - reorderLevel;
+        const stockDeficit = reorderLevel - currentStock;
+        const targetQuantity = stockDeficit > 0 ? stockDeficit : reorderLevel;
+        const suggestedQty = Math.min(sourceSurplus, targetQuantity);
+
+        if (suggestedQty <= 0) {
+            setToast({
+                type: "error",
+                message: "No transferable quantity is available for this product.",
+            });
+            return;
+        }
 
         setSuggestionModal({
             item,
             sourceBranch,
-            suggestedQty: Math.min(
-                Number(sourceBranch.quantity_in_stock) - Number(item.reorder_level),
-                Number(item.reorder_level) - Number(item.quantity_in_stock)
-            ),
+            suggestedQty,
         });
     };
 
@@ -175,6 +185,8 @@ export default function ManagerBranchInventory() {
                 body: JSON.stringify({
                     product_id: Number(item.product_id),
                     to_branch_id: Number(user.branch_id),
+                    from_branch_id: Number(suggestionModal.sourceBranch.branch_id),
+                    quantity: Number(suggestionModal.suggestedQty),
                     requested_by: Number(user.user_id),
                 }),
             });
@@ -195,6 +207,28 @@ export default function ManagerBranchInventory() {
                 message: `Transfer ${data.transfer_code} created successfully`,
             });
 
+            setTransfers((current) => [
+                {
+                    transfer_id: data.transfer_id,
+                    transfer_code: data.transfer_code,
+                    from_branch_id: data.from_branch_id,
+                    to_branch_id: data.to_branch_id,
+                    status: "PENDING_SOURCE",
+                    requested_by: Number(user.user_id),
+                    product_ids: [Number(item.product_id)],
+                },
+                ...current,
+            ]);
+            setTransferItems((current) => ({
+                ...current,
+                [data.transfer_id]: [
+                    {
+                        transfer_id: data.transfer_id,
+                        product_id: Number(item.product_id),
+                        quantity: data.quantity,
+                    },
+                ],
+            }));
             setSuggestionModal(null);
             setCreatingTransfer(false);
             fetchInventory(user.branch_id);
@@ -551,6 +585,7 @@ export default function ManagerBranchInventory() {
                                 ["Source Branch Stock", suggestionModal.sourceBranch.quantity_in_stock],
                                 ["Your Current Stock", suggestionModal.item.quantity_in_stock],
                                 ["Reorder Level", suggestionModal.item.reorder_level],
+                                ["Request Quantity", `${suggestionModal.suggestedQty} units`],
                             ].map(([label, value]) => (
                                 <div key={label} className="mb-2 flex items-center justify-between gap-6 last:mb-0">
                                     <span className="font-extrabold text-[#17325c]">

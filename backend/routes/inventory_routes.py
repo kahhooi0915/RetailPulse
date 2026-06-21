@@ -10,6 +10,13 @@ inventory_bp = Blueprint("inventory_bp", __name__)
 ACTIVE_PURCHASE_STATUSES = ("PENDING", "ORDERED")
 
 
+def ensure_branch_status_column(cur):
+    cur.execute("""
+        ALTER TABLE branch
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+    """)
+
+
 def _to_float(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -56,6 +63,7 @@ def admin_get_inventory():
     try:
         conn = get_connection()
         cur = conn.cursor()
+        ensure_branch_status_column(cur)
 
         cur.execute("""
             SELECT i.product_id,
@@ -63,6 +71,7 @@ def admin_get_inventory():
                    p.product_name,
                    i.branch_id,
                    b.branch_name,
+                   b.status AS branch_status,
                    i.quantity_in_stock,
                    i.last_updated,
                    ap.purchase_id,
@@ -96,12 +105,13 @@ def admin_get_inventory():
                 "product_name": row[2],
                 "branch_id": row[3],
                 "branch_name": row[4],
-                "quantity_in_stock": row[5],
-                "last_updated": row[6].isoformat() if row[6] else None,
-                "active_purchase_id": row[7],
-                "active_purchase_code": row[8],
-                "active_purchase_status": row[9],
-                "has_active_purchase": row[7] is not None
+                "branch_status": row[5],
+                "quantity_in_stock": row[6],
+                "last_updated": row[7].isoformat() if row[7] else None,
+                "active_purchase_id": row[8],
+                "active_purchase_code": row[9],
+                "active_purchase_status": row[10],
+                "has_active_purchase": row[8] is not None
             })
 
         cur.close()
@@ -363,7 +373,7 @@ def admin_warehouse_summary():
             JOIN branch tb ON st.to_branch_id = tb.branch_id
             WHERE fb.branch_type = 'WAREHOUSE'
               AND tb.branch_type = 'BRANCH'
-              AND st.status = 'PENDING'
+              AND st.status = 'PENDING_SOURCE'
         """)
         pending_requests = cur.fetchone()[0]
 
@@ -581,22 +591,25 @@ def admin_warehouse_distribute_stock():
         source_stock = cur.fetchone()
 
         if not source_stock or source_stock[0] < quantity:
+            available_stock = source_stock[0] if source_stock else 0
             conn.rollback()
             return jsonify({
-                "message": "Insufficient warehouse stock",
-                "available_stock": source_stock[0] if source_stock else 0,
+                "message": "Not enough warehouse stock for this distribution",
+                "available_stock": available_stock,
                 "requested_quantity": quantity,
+                "shortfall": max(quantity - available_stock, 0),
             }), 400
 
         total_quantity = quantity * len(destination_rows)
         if source_stock[0] < total_quantity:
             conn.rollback()
             return jsonify({
-                "message": "Insufficient warehouse stock for all selected branches",
+                "message": "Not enough warehouse stock for all selected branches",
                 "available_stock": source_stock[0],
                 "requested_quantity": total_quantity,
                 "quantity_per_branch": quantity,
                 "branch_count": len(destination_rows),
+                "shortfall": total_quantity - source_stock[0],
             }), 400
 
         cur.execute("""
@@ -606,7 +619,7 @@ def admin_warehouse_distribute_stock():
             JOIN branch b ON st.to_branch_id = b.branch_id
             WHERE st.from_branch_id = %s
               AND td.product_id = %s
-              AND st.status IN ('PENDING', 'APPROVED')
+              AND st.status IN ('PENDING', 'PENDING_SOURCE', 'APPROVED')
               AND st.to_branch_id = ANY(%s)
             ORDER BY st.transfer_id
             LIMIT 1
@@ -716,7 +729,8 @@ def admin_warehouse_transfers():
                    req.name AS requested_by_name,
                    st.transfer_date,
                    COUNT(td.transfer_detail_id) AS items_count,
-                   st.status
+                   st.status,
+                   st.approved_at
             FROM stock_transfer st
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
@@ -730,8 +744,9 @@ def admin_warehouse_transfers():
                      tb.branch_name,
                      req.name,
                      st.transfer_date,
-                     st.status
-            ORDER BY st.transfer_date DESC, st.transfer_id DESC
+                     st.status,
+                     st.approved_at
+            ORDER BY COALESCE(st.approved_at, st.transfer_date) DESC, st.transfer_id DESC
         """)
 
         rows = cur.fetchall()
@@ -746,7 +761,8 @@ def admin_warehouse_transfers():
                 "requested_by": row[4],
                 "transfer_date": row[5].isoformat() if row[5] else None,
                 "items_count": row[6],
-                "status": row[7]
+                "status": row[7],
+                "approved_at": row[8].isoformat() if row[8] else None
             })
 
         _close(conn, cur)
@@ -778,7 +794,7 @@ def admin_warehouse_transfer_approvals():
             JOIN branch tb ON st.to_branch_id = tb.branch_id
             LEFT JOIN users req ON st.requested_by = req.user_id
             LEFT JOIN transfer_detail td ON st.transfer_id = td.transfer_id
-            WHERE st.status = 'PENDING'
+            WHERE st.status = 'PENDING_SOURCE'
               AND fb.branch_type = 'WAREHOUSE'
               AND tb.branch_type = 'BRANCH'
             GROUP BY st.transfer_id,
@@ -939,7 +955,7 @@ def admin_warehouse_approve_transfer(transfer_id):
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
             WHERE st.transfer_id = %s
-              AND st.status = 'PENDING'
+              AND st.status = 'PENDING_SOURCE'
               AND fb.branch_type = 'WAREHOUSE'
               AND tb.branch_type = 'BRANCH'
             FOR UPDATE OF st
@@ -1019,7 +1035,7 @@ def admin_warehouse_approve_transfer(transfer_id):
                 approved_at = CURRENT_TIMESTAMP,
                 reject_reason = NULL
             WHERE transfer_id = %s
-              AND status = 'PENDING'
+              AND status = 'PENDING_SOURCE'
         """, (approved_by, transfer_id))
 
         conn.commit()
@@ -1065,7 +1081,7 @@ def admin_warehouse_reject_transfer(transfer_id):
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
             WHERE st.transfer_id = %s
-              AND st.status = 'PENDING'
+              AND st.status = 'PENDING_SOURCE'
               AND fb.branch_type = 'WAREHOUSE'
               AND tb.branch_type = 'BRANCH'
             FOR UPDATE OF st
@@ -1082,7 +1098,7 @@ def admin_warehouse_reject_transfer(transfer_id):
                 approved_by = %s,
                 approved_at = CURRENT_TIMESTAMP
             WHERE transfer_id = %s
-              AND status = 'PENDING'
+              AND status = 'PENDING_SOURCE'
         """, (reject_reason, approved_by, transfer_id))
 
         conn.commit()

@@ -3,7 +3,7 @@ import json
 import psycopg2
 from flask import Blueprint, request, jsonify
 from db import get_connection
-from audit import get_actor_user_id, log_audit
+from audit import get_actor_user_id, log_audit, set_audit_context
 
 product_bp = Blueprint("product_bp", __name__)
 DEFAULT_PRODUCT_IMAGE_URL = "/static/images/products/default.webp"
@@ -13,6 +13,82 @@ def get_product_image_url(product_id, has_image):
     if has_image:
         return f"/admin/products/{product_id}/image"
     return DEFAULT_PRODUCT_IMAGE_URL
+
+
+def ensure_product_audit_function(cur):
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION public.log_product_update()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            actor_id integer;
+            product_record_id integer;
+            description_text text;
+        BEGIN
+            actor_id := NULLIF(current_setting('app.current_user_id', true), '')::integer;
+
+            IF actor_id IS NULL THEN
+                actor_id := NULLIF(current_setting('app.user_id', true), '')::integer;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                actor_id := NULLIF(current_setting('retailpulse.current_user_id', true), '')::integer;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                actor_id := NULLIF(current_setting('retailpulse.user_id', true), '')::integer;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                SELECT user_id
+                INTO actor_id
+                FROM users
+                WHERE role = 'SYSTEM_ADMIN'
+                  AND status = 'ACTIVE'
+                ORDER BY user_id
+                LIMIT 1;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                SELECT user_id
+                INTO actor_id
+                FROM users
+                WHERE status = 'ACTIVE'
+                ORDER BY user_id
+                LIMIT 1;
+            END IF;
+
+            IF actor_id IS NULL THEN
+                IF TG_OP = 'DELETE' THEN
+                    RETURN OLD;
+                END IF;
+
+                RETURN NEW;
+            END IF;
+
+            IF TG_OP = 'DELETE' THEN
+                product_record_id := OLD.product_id;
+                description_text := 'Product information deleted';
+            ELSIF TG_OP = 'INSERT' THEN
+                product_record_id := NEW.product_id;
+                description_text := 'Product information created';
+            ELSE
+                product_record_id := NEW.product_id;
+                description_text := 'Product information updated';
+            END IF;
+
+            INSERT INTO audit_log (user_id, action, module, record_id, description, created_at)
+            VALUES (actor_id, TG_OP, 'PRODUCT', product_record_id, description_text, CURRENT_TIMESTAMP);
+
+            IF TG_OP = 'DELETE' THEN
+                RETURN OLD;
+            END IF;
+
+            RETURN NEW;
+        END;
+        $$;
+    """)
 
 
 def parse_supplier_mappings():
@@ -255,6 +331,9 @@ def admin_add_product():
         image_file = request.files.get("product_image") if not request.is_json else None
         suppliers = parse_supplier_mappings()
 
+        if not actor_user_id:
+            return jsonify({"message": "Actor user id is required for audit logging"}), 400
+
         if not product_name or not product_name.strip():
             return jsonify({"message": "Product name is required"}), 400
 
@@ -288,6 +367,8 @@ def admin_add_product():
 
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_audit_function(cur)
+        set_audit_context(cur, actor_user_id)
 
         validate_supplier_mappings(cur, suppliers)
 
@@ -394,6 +475,9 @@ def admin_update_product(product_id):
         image_file = request.files.get("product_image") if not request.is_json else None
         suppliers = parse_supplier_mappings()
 
+        if not actor_user_id:
+            return jsonify({"message": "Actor user id is required for audit logging"}), 400
+
         if not product_name or not product_name.strip():
             return jsonify({"message": "Product name is required"}), 400
 
@@ -417,6 +501,8 @@ def admin_update_product(product_id):
 
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_audit_function(cur)
+        set_audit_context(cur, actor_user_id)
 
         validate_supplier_mappings(cur, suppliers)
 
@@ -557,8 +643,14 @@ def admin_delete_product(product_id):
     try:
         data = request.get_json(silent=True) or {}
         actor_user_id = get_actor_user_id(data)
+
+        if not actor_user_id:
+            return jsonify({"message": "Actor user id is required for audit logging"}), 400
+
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_audit_function(cur)
+        set_audit_context(cur, actor_user_id)
 
         cur.execute("SELECT product_name FROM product WHERE product_id = %s", (product_id,))
         product = cur.fetchone()
@@ -597,6 +689,9 @@ def admin_update_product_reorder_level(product_id):
         actor_user_id = get_actor_user_id(data)
         reorder_level = data.get("reorder_level")
 
+        if not actor_user_id:
+            return jsonify({"message": "Actor user id is required for audit logging"}), 400
+
         if reorder_level is None:
             return jsonify({"message": "Reorder level is required"}), 400
 
@@ -605,6 +700,8 @@ def admin_update_product_reorder_level(product_id):
 
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_audit_function(cur)
+        set_audit_context(cur, actor_user_id)
 
         cur.execute("SELECT product_name FROM product WHERE product_id = %s", (product_id,))
         product = cur.fetchone()

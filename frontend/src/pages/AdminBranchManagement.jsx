@@ -6,7 +6,7 @@ import {
     Search,
     Plus,
     Pencil,
-    Trash2,
+    Power,
     MapPin,
     Phone,
     X,
@@ -22,6 +22,7 @@ const emptyForm = {
     branch_address: "",
     phone: "",
     branch_type: "BRANCH",
+    status: "ACTIVE",
 };
 
 const formatPhoneNumber = (value) => {
@@ -131,14 +132,16 @@ export default function AdminBranchManagement() {
                 item.branch_name?.toLowerCase().includes(keyword) ||
                 item.branch_address?.toLowerCase().includes(keyword) ||
                 item.phone?.toLowerCase().includes(keyword) ||
-                item.branch_type?.toLowerCase().includes(keyword)
+                item.branch_type?.toLowerCase().includes(keyword) ||
+                item.status?.toLowerCase().includes(keyword)
             );
         });
     }, [branches, searchTerm]);
 
     const totalBranches = branches.length;
-    const retailBranches = branches.filter((item) => item.branch_type === "BRANCH").length;
-    const warehouses = branches.filter((item) => item.branch_type === "WAREHOUSE").length;
+    const activeBranches = branches.filter((item) => item.status !== "INACTIVE").length;
+    const inactiveBranches = branches.filter((item) => item.status === "INACTIVE").length;
+    const warehouses = branches.filter((item) => item.branch_type === "WAREHOUSE" && item.status !== "INACTIVE").length;
     const branchesWithAddress = branches.filter((item) =>
         item.branch_address?.trim()
     ).length;
@@ -164,6 +167,7 @@ export default function AdminBranchManagement() {
             branch_address: selectedBranch.branch_address || "",
             phone: selectedBranch.phone || "",
             branch_type: selectedBranch.branch_type || "BRANCH",
+            status: selectedBranch.status || "ACTIVE",
         });
 
         setFieldErrors({ phone: "" });
@@ -210,6 +214,9 @@ export default function AdminBranchManagement() {
         if (!["BRANCH", "WAREHOUSE"].includes(formData.branch_type)) {
             return "Branch type is invalid.";
         }
+        if (!["ACTIVE", "INACTIVE"].includes(formData.status)) {
+            return "Status is invalid.";
+        }
         if (phoneError) return phoneError;
 
         return null;
@@ -233,6 +240,7 @@ export default function AdminBranchManagement() {
                 branch_address: formData.branch_address.trim(),
                 phone: formData.phone.trim(),
                 branch_type: formData.branch_type,
+                status: formData.status,
             };
 
             const url = editBranch
@@ -272,12 +280,17 @@ export default function AdminBranchManagement() {
         }
     };
 
-    const deleteBranch = async (selectedBranch) => {
-        const confirmDelete = window.confirm(
-            `Delete ${selectedBranch.branch_name}? This action cannot be undone.`
+    const inactivateBranch = async (selectedBranch) => {
+        if (selectedBranch.status === "INACTIVE") {
+            showToast("Branch is already inactive.", "error");
+            return;
+        }
+
+        const confirmInactivate = window.confirm(
+            `Inactivate ${selectedBranch.branch_name}? It will stay in history but cannot be used as an active branch.`
         );
 
-        if (!confirmDelete) return;
+        if (!confirmInactivate) return;
 
         try {
             const res = await fetch(
@@ -294,11 +307,11 @@ export default function AdminBranchManagement() {
                 return;
             }
 
-            showToast("Branch deleted successfully.");
+            showToast("Branch inactivated successfully.");
             loadBranches();
         } catch (error) {
             console.error(error);
-            showToast("Failed to delete branch.", "error");
+            showToast("Failed to inactivate branch.", "error");
         }
     };
 
@@ -337,8 +350,8 @@ export default function AdminBranchManagement() {
                                 color="text-[#1e4db7]"
                             />
                             <SummaryCard
-                                title="Retail Branches"
-                                value={retailBranches}
+                                title="Active Locations"
+                                value={activeBranches}
                                 icon={MapPin}
                                 color="text-green-600"
                             />
@@ -349,10 +362,10 @@ export default function AdminBranchManagement() {
                                 color="text-[#07102f]"
                             />
                             <SummaryCard
-                                title="Incomplete Info"
-                                value={incompleteBranches}
+                                title="Inactive"
+                                value={inactiveBranches}
                                 icon={RefreshCcw}
-                                color="text-orange-500"
+                                color="text-red-500"
                             />
                         </section>
 
@@ -382,7 +395,7 @@ export default function AdminBranchManagement() {
                                     <input
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
-                                        placeholder="Search by branch code, name, type, address, or phone..."
+                                        placeholder="Search by branch code, name, type, address, phone, or status..."
                                         className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-[#8aa0bb]"
                                     />
                                 </div>
@@ -394,6 +407,7 @@ export default function AdminBranchManagement() {
                                         <tr>
                                             <th className="px-4 py-3">Branch</th>
                                             <th className="px-4 py-3">Type</th>
+                                            <th className="px-4 py-3">Status</th>
                                             <th className="px-4 py-3">Address</th>
                                             <th className="px-4 py-3">Phone</th>
                                             <th className="px-4 py-3 text-right">Action</th>
@@ -424,6 +438,10 @@ export default function AdminBranchManagement() {
                                                 </td>
 
                                                 <td className="px-4 py-4">
+                                                    <StatusBadge status={item.status || "ACTIVE"} />
+                                                </td>
+
+                                                <td className="px-4 py-4">
                                                     <p className="max-w-[520px] font-semibold text-[#17325c]">
                                                         {item.branch_address || "-"}
                                                     </p>
@@ -444,11 +462,12 @@ export default function AdminBranchManagement() {
                                                         </button>
 
                                                         <button
-                                                            onClick={() => deleteBranch(item)}
-                                                            className="grid h-9 w-9 place-items-center rounded-xl bg-red-50 text-red-500 hover:bg-red-100"
-                                                            title="Delete"
+                                                            onClick={() => inactivateBranch(item)}
+                                                            disabled={item.status === "INACTIVE"}
+                                                            className="grid h-9 w-9 place-items-center rounded-xl bg-red-50 text-red-500 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                                            title="Inactivate"
                                                         >
-                                                            <Trash2 size={16} />
+                                                            <Power size={16} />
                                                         </button>
                                                     </div>
                                                 </td>
@@ -458,7 +477,7 @@ export default function AdminBranchManagement() {
                                         {filteredBranches.length === 0 && (
                                             <tr>
                                                 <td
-                                                    colSpan="5"
+                                                    colSpan="6"
                                                     className="px-4 py-10 text-center font-semibold text-[#6f85a3]"
                                                 >
                                                     No branch records found.
@@ -498,6 +517,16 @@ export default function AdminBranchManagement() {
                             options={[
                                 { value: "BRANCH", label: "Branch" },
                                 { value: "WAREHOUSE", label: "Warehouse" },
+                            ]}
+                        />
+
+                        <FormSelect
+                            label="Status"
+                            value={formData.status}
+                            onChange={(value) => handleFormChange("status", value)}
+                            options={[
+                                { value: "ACTIVE", label: "Active" },
+                                { value: "INACTIVE", label: "Inactive" },
                             ]}
                         />
 
@@ -642,8 +671,8 @@ export default function AdminBranchManagement() {
                             <ul className="space-y-3 text-sm text-[#17325c]">
                                 <li>• Add new retail branch or warehouse records.</li>
                                 <li>• Update branch name, type, address, and phone number.</li>
-                                <li>• Delete locations that are no longer used.</li>
-                                <li>• Search locations by code, name, type, address, or phone.</li>
+                                <li>• Inactivate locations that are no longer used.</li>
+                                <li>• Search locations by code, name, type, address, phone, or status.</li>
                                 <li>• Review incomplete location information.</li>
                             </ul>
                         </div>
@@ -657,7 +686,7 @@ export default function AdminBranchManagement() {
                                 <li>• BRANCH represents a normal retail outlet.</li>
                                 <li>• WAREHOUSE represents a central stock location.</li>
                                 <li>• Both branch and warehouse records can be linked to inventory and stock transfers.</li>
-                                <li>• Deleting a branch or warehouse may fail if it is referenced by existing records.</li>
+                                <li>• Inactive branches stay available for historical records but should not be used for new operations.</li>
                             </ul>
                         </div>
                     </div>
@@ -739,6 +768,21 @@ function SummaryCard({ title, value, icon: Icon, color }) {
 
             <h2 className={`mt-4 text-2xl font-extrabold ${color}`}>{value}</h2>
         </div>
+    );
+}
+
+function StatusBadge({ status }) {
+    const isActive = status === "ACTIVE";
+
+    return (
+        <span
+            className={`rounded-full px-3 py-1 text-xs font-extrabold ${isActive
+                    ? "bg-green-50 text-green-600"
+                    : "bg-red-50 text-red-500"
+                }`}
+        >
+            {status}
+        </span>
     );
 }
 

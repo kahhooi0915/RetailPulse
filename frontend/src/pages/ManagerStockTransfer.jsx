@@ -64,6 +64,7 @@ export default function ManagerStockTransfer() {
     const [rejectTarget, setRejectTarget] = useState(null);
     const [rejectReason, setRejectReason] = useState("");
     const [viewTarget, setViewTarget] = useState(null);
+    const [receiveTarget, setReceiveTarget] = useState(null);
 
     const [form, setForm] = useState({
         from_branch_id: "",
@@ -157,6 +158,18 @@ export default function ManagerStockTransfer() {
         return stockRecord ? Number(stockRecord.quantity_in_stock) : 0;
     };
 
+    const getSourceBranchStock = (productId) => {
+        if (!form.from_branch_id || !productId) return null;
+
+        const stockRecord = inventory.find(
+            (item) =>
+                Number(item.product_id) === Number(productId) &&
+                Number(item.branch_id) === Number(form.from_branch_id)
+        );
+
+        return stockRecord ? Number(stockRecord.quantity_in_stock) : 0;
+    };
+
     const isBranchToBranch = useCallback((transfer) => {
         const sourceType = transfer.source_branch_type || getBranch(transfer.from_branch_id)?.branch_type;
         const destinationType = transfer.destination_branch_type || getBranch(transfer.to_branch_id)?.branch_type;
@@ -171,7 +184,7 @@ export default function ManagerStockTransfer() {
     }, [branches, user]);
 
     const myTransferRequests = useMemo(() => {
-        const trackedStatuses = ["PENDING", "APPROVED", "AWAITING_RECEIVE", "RECEIVED", "COMPLETED", "REJECTED"];
+        const trackedStatuses = ["PENDING", "PENDING_SOURCE", "APPROVED", "AWAITING_RECEIVE", "RECEIVED", "COMPLETED", "REJECTED"];
 
         return transfers.filter(
             (transfer) =>
@@ -186,9 +199,17 @@ export default function ManagerStockTransfer() {
                 Number(transfer.from_branch_id) === Number(user?.branch_id) &&
                 Number(transfer.to_branch_id) !== Number(user?.branch_id) &&
                 isBranchToBranch(transfer) &&
-                transfer.status === "PENDING"
+                transfer.status === "PENDING_SOURCE"
         );
     }, [approvalTransfers, user, isBranchToBranch]);
+
+    const managerReviewRequests = useMemo(() => {
+        return approvalTransfers.filter(
+            (transfer) =>
+                Number(transfer.to_branch_id) === Number(user?.branch_id) &&
+                transfer.status === "PENDING"
+        );
+    }, [approvalTransfers, user]);
 
     const awaitingReceive = useMemo(() => {
         return myTransferRequests.filter(isAwaitingReceiveStatus);
@@ -207,7 +228,9 @@ export default function ManagerStockTransfer() {
     }, [transfers, user]);
 
     const myPendingRequests = useMemo(() => {
-        return myTransferRequests.filter((transfer) => transfer.status === "PENDING");
+        return myTransferRequests.filter((transfer) =>
+            ["PENDING", "PENDING_SOURCE"].includes(transfer.status)
+        );
     }, [myTransferRequests]);
 
     const showToast = (message) => {
@@ -386,6 +409,7 @@ export default function ManagerStockTransfer() {
             }
 
             showToast("Stock received successfully");
+            setReceiveTarget(null);
             fetchData(user);
         } catch (error) {
             alert(error.message);
@@ -541,10 +565,10 @@ export default function ManagerStockTransfer() {
                             tooltip="Approved transfers waiting for your branch to confirm received stock."
                         />
                         <SummaryBox
-                            title="Other Branch Requests"
-                            value={approvalRequests.length}
+                            title="Needs Action"
+                            value={managerReviewRequests.length + approvalRequests.length}
                             tone="purple"
-                            tooltip="Requests from other branches that need your branch to approve or reject."
+                            tooltip="Staff review requests plus source approval requests waiting for your decision."
                         />
                         <SummaryBox
                             title="Transfer History"
@@ -598,7 +622,8 @@ export default function ManagerStockTransfer() {
                                                 <option key={product.product_id} value={product.product_id}>
                                                     {formatProductOption(
                                                         product,
-                                                        getCurrentBranchStock(product.product_id)
+                                                        getCurrentBranchStock(product.product_id),
+                                                        getSourceBranchStock(product.product_id)
                                                     )}
                                                 </option>
                                             ))}
@@ -664,9 +689,46 @@ export default function ManagerStockTransfer() {
                             transferItems={transferItems}
                             getBranchName={getBranchName}
                             onView={setViewTarget}
-                            onReceive={handleReceive}
+                            onReceive={setReceiveTarget}
                             actionLoading={actionLoading}
                         />
+                    </TransferSection>
+
+                    <TransferSection
+                        title="Staff Requests To Review"
+                        desc="Requests submitted for your branch that must be reviewed before the source branch sees them."
+                        badge={`${managerReviewRequests.length} request(s)`}
+                        empty="No staff requests waiting for your review."
+                    >
+                        {managerReviewRequests.map((transfer) => (
+                            <TransferCard
+                                key={transfer.transfer_id}
+                                transfer={transfer}
+                                items={transferItems[transfer.transfer_id] || []}
+                                getBranchName={getBranchName}
+                                actions={
+                                    <div className="mt-5 grid grid-cols-2 gap-3">
+                                        <button
+                                            disabled={actionLoading}
+                                            onClick={() => setRejectTarget(transfer)}
+                                            className="flex items-center justify-center gap-2 rounded-full border border-red-400 bg-white py-3 font-extrabold text-red-500 disabled:bg-gray-200"
+                                        >
+                                            <XCircle size={17} />
+                                            Reject
+                                        </button>
+
+                                        <button
+                                            disabled={actionLoading}
+                                            onClick={() => handleApprove(transfer.transfer_id)}
+                                            className="flex items-center justify-center gap-2 rounded-full bg-[#0c2f73] py-3 font-extrabold text-white disabled:bg-gray-400"
+                                        >
+                                            <CheckCircle size={17} />
+                                            Send to Source
+                                        </button>
+                                    </div>
+                                }
+                            />
+                        ))}
                     </TransferSection>
 
                     <TransferSection
@@ -809,6 +871,17 @@ export default function ManagerStockTransfer() {
                     items={transferItems[viewTarget.transfer_id] || []}
                     getBranchName={getBranchName}
                     onClose={() => setViewTarget(null)}
+                />
+            )}
+
+            {receiveTarget && (
+                <ReceiveTransferModal
+                    transfer={receiveTarget}
+                    items={transferItems[receiveTarget.transfer_id] || []}
+                    getBranchName={getBranchName}
+                    actionLoading={actionLoading}
+                    onClose={() => setReceiveTarget(null)}
+                    onConfirm={() => handleReceive(receiveTarget.transfer_id)}
                 />
             )}
 
@@ -964,21 +1037,21 @@ function TransferSection({ title, desc, badge, empty, children }) {
 function MyTransferTable({ transfers, transferItems, getBranchName, onView, onReceive, actionLoading }) {
     return (
         <div className="overflow-x-auto rounded-2xl border border-blue-50">
-            <table className="w-full table-fixed text-left text-sm">
+            <table className="w-full min-w-[960px] table-fixed text-left text-sm">
                 <colgroup>
-                    <col className="w-[16%]" />
-                    <col className="w-[20%]" />
-                    <col className="w-[24%]" />
                     <col className="w-[12%]" />
-                    <col className="w-[14%]" />
-                    <col className="w-[14%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[30%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[10%]" />
                 </colgroup>
                 <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
                     <tr>
                         <th className="px-4 py-3">Code</th>
                         <th className="px-4 py-3">From</th>
                         <th className="px-4 py-3">To</th>
-                        <th className="px-4 py-3">Items</th>
+                        <th className="px-4 py-3">Products</th>
                         <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3 text-right">Action</th>
                     </tr>
@@ -1001,8 +1074,8 @@ function MyTransferTable({ transfers, transferItems, getBranchName, onView, onRe
                                 <td className="px-4 py-4">
                                     {getBranchName(transfer.to_branch_id)}
                                 </td>
-                                <td className="px-4 py-4 text-xs font-semibold text-[#6f85a3]">
-                                    {items.length ? `${items.length} item(s)` : "-"}
+                                <td className="px-4 py-4">
+                                    <ProductSummary items={items} />
                                 </td>
                                 <td className="px-4 py-4">
                                     <StatusBadge status={transfer.status} />
@@ -1012,11 +1085,11 @@ function MyTransferTable({ transfers, transferItems, getBranchName, onView, onRe
                                         {awaitingReceive ? (
                                             <button
                                                 disabled={actionLoading}
-                                                onClick={() => onReceive(transfer.transfer_id)}
+                                                onClick={() => onReceive(transfer)}
                                                 className="flex items-center justify-center gap-2 whitespace-nowrap rounded-full bg-green-600 px-4 py-2 font-extrabold text-white disabled:bg-gray-400"
                                             >
-                                                <PackageCheck size={16} />
-                                                Receive
+                                                <Eye size={16} />
+                                                Review
                                             </button>
                                         ) : (
                                             <button
@@ -1049,6 +1122,39 @@ function MyTransferTable({ transfers, transferItems, getBranchName, onView, onRe
                     )}
                 </tbody>
             </table>
+        </div>
+    );
+}
+
+function ProductSummary({ items }) {
+    if (!items.length) {
+        return <span className="text-xs font-semibold text-[#6f85a3]">No items found</span>;
+    }
+
+    const visibleItems = items.slice(0, 2);
+    const remainingCount = items.length - visibleItems.length;
+
+    return (
+        <div className="space-y-2">
+            {visibleItems.map((item) => (
+                <div
+                    key={item.transfer_detail_id}
+                    className="flex items-center justify-between gap-3 rounded-xl bg-[#f8fcff] px-3 py-2"
+                >
+                    <span className="min-w-0 flex-1 truncate font-bold text-[#17325c]">
+                        {item.product_name || `Product ${item.product_id}`}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-blue-100 px-3 py-1 text-xs font-extrabold text-[#1e4db7]">
+                        Qty: {item.quantity}
+                    </span>
+                </div>
+            ))}
+
+            {remainingCount > 0 && (
+                <p className="px-3 text-xs font-bold text-[#6f85a3]">
+                    +{remainingCount} more product(s)
+                </p>
+            )}
         </div>
     );
 }
@@ -1160,6 +1266,84 @@ function TransferDetailsModal({ transfer, items, getBranchName, onClose }) {
                             ))}
                         </div>
                     )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ReceiveTransferModal({ transfer, items, getBranchName, actionLoading, onClose, onConfirm }) {
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-[680px] rounded-3xl bg-white p-7 shadow-2xl">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                    <div>
+                        <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
+                            {transfer.transfer_code}
+                        </p>
+                        <h2 className="mt-1 text-xl font-extrabold text-[#07102f]">
+                            Confirm Received Stock
+                        </h2>
+                        <p className="mt-1 text-sm font-semibold text-[#6f85a3]">
+                            {getBranchName(transfer.from_branch_id)} to {getBranchName(transfer.to_branch_id)}
+                        </p>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={actionLoading}
+                        className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef6fb] text-[#254e7a] disabled:opacity-50"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <InfoBlock label="Status" value={<StatusBadge status={transfer.status} />} />
+                    <InfoBlock label="Approved Time" value={formatDateTime(transfer.approved_at)} />
+                </div>
+
+                <div className="mt-5 rounded-2xl bg-[#f8fcff] p-4">
+                    <p className="mb-3 text-xs font-bold uppercase text-[#6f85a3]">
+                        Products To Receive
+                    </p>
+
+                    {items.length === 0 ? (
+                        <p className="text-sm font-semibold text-[#6f85a3]">
+                            No items found.
+                        </p>
+                    ) : (
+                        <div className="space-y-2">
+                            {items.map((item) => (
+                                <TransferItemStockRow
+                                    key={item.transfer_detail_id}
+                                    item={item}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="mt-6 flex flex-wrap justify-end gap-3">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={actionLoading}
+                        className="rounded-full border border-blue-100 bg-white px-5 py-3 font-extrabold text-[#1e4db7] hover:bg-[#eef6fb] disabled:opacity-50"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={onConfirm}
+                        disabled={actionLoading || items.length === 0}
+                        className="inline-flex items-center justify-center gap-2 rounded-full bg-green-600 px-5 py-3 font-extrabold text-white hover:bg-green-700 disabled:bg-gray-300"
+                    >
+                        <PackageCheck size={17} />
+                        {actionLoading ? "Receiving..." : "Confirm Received"}
+                    </button>
                 </div>
             </div>
         </div>
@@ -1287,7 +1471,9 @@ function StatusBadge({ status }) {
     const style =
         displayStatus === "PENDING"
             ? "bg-orange-100 text-orange-600"
-            : displayStatus === "AWAITING_RECEIVE"
+            : displayStatus === "SOURCE_REVIEW"
+                ? "bg-purple-100 text-purple-600"
+                : displayStatus === "AWAITING_RECEIVE"
                 ? "bg-blue-100 text-[#1e4db7]"
                 : displayStatus === "COMPLETED"
                     ? "bg-green-100 text-green-600"
@@ -1301,6 +1487,7 @@ function StatusBadge({ status }) {
 }
 
 function getDisplayStatus(status) {
+    if (status === "PENDING_SOURCE") return "SOURCE_REVIEW";
     if (status === "APPROVED") return "AWAITING_RECEIVE";
     if (status === "RECEIVED") return "COMPLETED";
     return status;
@@ -1330,8 +1517,9 @@ function formatTransferItems(items) {
         .join(", ");
 }
 
-function formatProductOption(product, stock) {
-    return `${product.product_name} (Stock: ${stock ?? 0})`;
+function formatProductOption(product, branchStock, sourceStock) {
+    const sourceText = sourceStock === null ? "Select source first" : sourceStock;
+    return `${product.product_name} (Your Stock: ${branchStock ?? 0} | Source Stock: ${sourceText})`;
 }
 
 function formatDateTime(value) {

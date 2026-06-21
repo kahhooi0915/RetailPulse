@@ -89,9 +89,9 @@ export default function AdminReportsForecasting() {
         );
     }, [forecastResults]);
 
-    const totalHistoricalQuantity = useMemo(() => {
+    const totalRecentAverageQuantity = useMemo(() => {
         return forecastResults.reduce(
-            (sum, item) => sum + getTotalQuantitySold(item),
+            (sum, item) => sum + getRecentMonthlyAverage(item),
             0
         );
     }, [forecastResults]);
@@ -115,8 +115,8 @@ export default function AdminReportsForecasting() {
     }, [forecastResults]);
 
     const forecastGrowth = useMemo(() => {
-        return calculateForecastGrowth(totalForecastQuantity, totalHistoricalQuantity);
-    }, [totalForecastQuantity, totalHistoricalQuantity]);
+        return calculateForecastGrowth(totalForecastQuantity, totalRecentAverageQuantity);
+    }, [totalForecastQuantity, totalRecentAverageQuantity]);
 
     const confidenceScore = useMemo(() => {
         return calculateForecastConfidence(averageRmse, totalForecastQuantity);
@@ -303,7 +303,7 @@ export default function AdminReportsForecasting() {
                                     />
                                     <ReportActionButton
                                         icon={FileSpreadsheet}
-                                        label="Export Excel"
+                                        label="Download Excel"
                                         onClick={handleExportExcel}
                                     />
                                     <ReportActionButton
@@ -392,7 +392,7 @@ export default function AdminReportsForecasting() {
 
                                         <div className="mt-5 rounded-2xl bg-white/10 p-4">
                                             <p className="text-xs font-bold uppercase tracking-widest text-blue-100">
-                                                Forecast Growth
+                                                Growth vs 3-Month Avg
                                             </p>
 
                                             <p
@@ -845,7 +845,7 @@ function buildForecastWorkbookXml({
             "Selected Forecast Method",
             "MAE",
             "RMSE",
-            "Forecast Growth (%)",
+            "Growth vs 3-Month Avg (%)",
         ]),
         ...forecastResults.map((item) => [
             textCell(item.product_name || "-"),
@@ -944,7 +944,7 @@ function buildForecastWorkbookXml({
         ],
         [textCell("Method Summary", "SummaryLabel"), textCell(methodSummary.description)],
         [
-            textCell("Overall Forecast Growth", "SummaryLabel"),
+            textCell("Overall Growth vs 3-Month Avg", "SummaryLabel"),
             numberCell(forecastGrowth / 100, "Percent"),
         ],
         [
@@ -1045,7 +1045,7 @@ function buildInventoryRecommendationRows(forecastResults, products, inventory) 
 }
 
 function getProductForecastGrowth(item) {
-    return calculateForecastGrowth(item.forecast_quantity, getTotalQuantitySold(item));
+    return calculateForecastGrowth(item.forecast_quantity, getRecentMonthlyAverage(item));
 }
 
 function sortForecastResultsByDemand(forecastResults) {
@@ -1067,6 +1067,20 @@ function getTotalQuantitySold(item) {
 
 function getTotalSalesRevenue(item) {
     return Number(item.total_sales_revenue ?? item.total_revenue ?? 0);
+}
+
+function getRecentMonthlyAverage(item, months = 3) {
+    const monthlySales = Array.isArray(item.monthly_sales) ? item.monthly_sales : [];
+    const recentQuantities = monthlySales
+        .slice(-months)
+        .map((month) => Number(month.quantity || 0))
+        .filter((quantity) => !Number.isNaN(quantity));
+
+    if (recentQuantities.length > 0) {
+        return recentQuantities.reduce((sum, quantity) => sum + quantity, 0) / recentQuantities.length;
+    }
+
+    return Number(item.forecast_quantity || 0);
 }
 
 function calculateForecastGrowth(forecastQuantity, historicalQuantity) {

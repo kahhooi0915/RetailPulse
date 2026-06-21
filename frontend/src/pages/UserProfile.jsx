@@ -19,6 +19,8 @@ import {
   Boxes,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import Sidebar from "../components/Sidebar";
+import ManagerSidebar from "../components/ManagerSidebar";
 
 const API_BASE = "http://localhost:5000";
 
@@ -190,13 +192,21 @@ export default function UserProfile() {
   }
 
   const isManager = form.role === "INVENTORY_MANAGER";
-  const profileTitle = isManager ? "Manager Profile" : "Staff Profile";
-  const roleIdLabel = isManager ? "Manager ID" : "Staff ID";
+  const isAdmin = form.role === "SYSTEM_ADMIN";
+  const profileTitle = isAdmin ? "Admin Profile" : isManager ? "Manager Profile" : "Staff Profile";
+  const profileSubtitle = isAdmin
+    ? "Manage your administrator account details and system access information."
+    : "Manage your personal information. Email, role, user code and password are controlled by admin.";
+  const roleIdLabel = isAdmin ? "Admin ID" : isManager ? "Manager ID" : "Staff ID";
 
   return (
     <div className="h-screen w-full overflow-hidden bg-[#eef6fb] text-[#17325c]">
-      <div className="grid h-full grid-cols-[230px_minmax(0,1fr)]">
+      <div className={isAdmin || isManager ? "flex h-full" : "grid h-full grid-cols-[230px_minmax(0,1fr)]"}>
+        {isAdmin && <Sidebar user={user} />}
+        {isManager && <ManagerSidebar user={user} />}
+
         {/* SIDEBAR */}
+        {!isAdmin && !isManager && (
         <aside className="flex flex-col bg-[#d9edf8] px-5 py-6 border-r border-blue-100">
           <div className="mb-8 text-2xl font-extrabold text-[#1e4db7]">
             RetailPulse
@@ -204,7 +214,7 @@ export default function UserProfile() {
 
           <div className="mb-7 rounded-2xl bg-white/50 px-4 py-3">
             <h4 className="font-extrabold text-[#16325b]">
-              {form.branch_name || "Branch"}
+              {isAdmin ? "System Admin" : form.branch_name || "Branch"}
             </h4>
             <p className="mt-1 text-xs text-[#6f85a3]">
               {roleIdLabel}: {user?.user_id}
@@ -212,7 +222,33 @@ export default function UserProfile() {
           </div>
 
           <nav className="space-y-3">
-            {isManager ? (
+            {isAdmin ? (
+              <>
+                <button
+                  onClick={() => navigate("/admin")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <BarChart3 size={18} />
+                  <span>Dashboard</span>
+                </button>
+
+                <button
+                  onClick={() => navigate("/admin/users")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <User size={18} />
+                  <span>User Management</span>
+                </button>
+
+                <button
+                  onClick={() => navigate("/admin/reports")}
+                  className="flex w-full items-center gap-4 rounded-2xl bg-white/30 px-4 py-4 font-semibold text-[#254e7a] hover:bg-white/70"
+                >
+                  <BarChart3 size={18} />
+                  <span>Reports</span>
+                </button>
+              </>
+            ) : isManager ? (
               <>
                 <button
                   onClick={() => navigate("/manager-dashboard")}
@@ -260,13 +296,14 @@ export default function UserProfile() {
           </nav>
 
         </aside>
+        )}
 
         {/* MAIN */}
         <motion.main
             initial={{ opacity: 0, x: 30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.35 }}
-            className="min-w-0 overflow-y-auto px-8 py-6"
+            className={`min-w-0 overflow-y-auto px-8 py-6 ${isAdmin || isManager ? "flex-1" : ""}`}
             >
 
           <header className="mb-8 flex items-center justify-between">
@@ -275,7 +312,7 @@ export default function UserProfile() {
                 {profileTitle}  
               </h1>
               <p className="mt-1 text-sm text-[#6f85a3]">
-                Manage your personal information. Email, role, user code and password are controlled by admin.
+                {profileSubtitle}
               </p>
             </div>
 
@@ -476,25 +513,42 @@ export default function UserProfile() {
                 <div className="rounded-2xl bg-white p-5">
                   <p className="font-extrabold text-[#07102f]">Password</p>
                   <p className="mt-1 text-sm text-[#6f85a3]">
-                    Password cannot be changed here. Please contact admin.
+                    {isAdmin
+                      ? "Password changes should be handled through a verified account-security flow."
+                      : "Password cannot be changed here. Please contact admin."}
                   </p>
                 </div>
 
                 <div className="rounded-2xl bg-white p-5">
-                  <p className="font-extrabold text-[#07102f]">Role Access</p>
+                  <p className="font-extrabold text-[#07102f]">
+                    {isAdmin ? "Administrator Access" : "Role Access"}
+                  </p>
                   <p className="mt-1 text-sm text-[#6f85a3]">
-                    Your role is assigned by system admin only.
+                    {isAdmin
+                      ? "This account has access to user, branch, catalog, inventory, sales, purchase, reporting, and backup management."
+                      : "Your role is assigned by system admin only."}
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
-                  <p className="font-extrabold text-red-600">
-                    Restricted Fields
-                  </p>
-                  <p className="mt-1 text-sm text-red-500">
-                    Email, role, user code and password are locked.
-                  </p>
-                </div>
+                {isAdmin ? (
+                  <div className="rounded-2xl border border-blue-100 bg-white p-5">
+                    <p className="font-extrabold text-[#0c2f73]">
+                      Protected Identity Fields
+                    </p>
+                    <p className="mt-1 text-sm text-[#5b718d]">
+                      Role and user code stay locked to prevent accidental changes to administrator access.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
+                    <p className="font-extrabold text-red-600">
+                      Restricted Fields
+                    </p>
+                    <p className="mt-1 text-sm text-red-500">
+                      Email, role, user code and password are locked.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </section>

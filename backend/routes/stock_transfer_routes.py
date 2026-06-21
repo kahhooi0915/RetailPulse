@@ -4,6 +4,19 @@ from audit import log_audit
 
 stock_transfer_bp = Blueprint("stock_transfer_bp", __name__)
 
+STATUS_MANAGER_REVIEW = "PENDING"
+STATUS_SOURCE_APPROVAL = "PENDING_SOURCE"
+STATUS_APPROVED = "APPROVED"
+STATUS_REJECTED = "REJECTED"
+STATUS_RECEIVED = "RECEIVED"
+
+
+def _ensure_branch_status_column(cur):
+    cur.execute("""
+        ALTER TABLE branch
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+    """)
+
 
 def _get_user(cur, user_id):
     if not user_id:
@@ -99,6 +112,19 @@ def _can_admin_approve_endpoint(user, from_branch_type, to_branch_type):
     return True, None
 
 
+def _can_review_destination_transfer(user, to_branch_id):
+    if not user or user["status"] != "ACTIVE":
+        return False, "Reviewer not found or inactive"
+
+    if user["role"] != "INVENTORY_MANAGER":
+        return False, "Only the destination branch inventory manager can review staff requests"
+
+    if _to_int(user["branch_id"]) != _to_int(to_branch_id):
+        return False, "Inventory managers can only review requests for their assigned branch"
+
+    return True, None
+
+
 def _can_receive_transfer(user, to_branch_id):
     if not user or user["status"] != "ACTIVE":
         return False, "Receiver not found or inactive"
@@ -110,6 +136,10 @@ def _can_receive_transfer(user, to_branch_id):
         return False, "Inventory managers can only receive stock for their assigned branch"
 
     return True, None
+
+
+def _is_active_admin(user):
+    return user and user["role"] == "SYSTEM_ADMIN" and user["status"] == "ACTIVE"
 
 
 def _to_int(value):
@@ -231,6 +261,8 @@ def create_transfer_request():
             conn.rollback()
             return jsonify(product_error), 404
 
+        initial_status = STATUS_SOURCE_APPROVAL if user["role"] == "INVENTORY_MANAGER" else STATUS_MANAGER_REVIEW
+
         cur.execute("""
             INSERT INTO stock_transfer (
                 from_branch_id,
@@ -240,9 +272,9 @@ def create_transfer_request():
                 reject_reason,
                 approved_at
             )
-            VALUES (%s, %s, 'PENDING', %s, NULL, NULL)
+            VALUES (%s, %s, %s, %s, NULL, NULL)
             RETURNING transfer_id, transfer_code
-        """, (from_branch_id, to_branch_id, requested_by))
+        """, (from_branch_id, to_branch_id, initial_status, requested_by))
 
         new_transfer = cur.fetchone()
 
@@ -266,6 +298,145 @@ def create_transfer_request():
             "transfer_id": new_transfer[0],
             "transfer_code": new_transfer[1],
             "items_count": len(items)
+        }), 201
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"message": str(e)}), 500
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+@stock_transfer_bp.route("/admin/stock-transfer/request", methods=["POST"])
+def admin_create_transfer_request():
+    conn = None
+    cur = None
+    try:
+        data = request.get_json() or {}
+
+        from_branch_id = data.get("from_branch_id")
+        to_branch_id = data.get("to_branch_id")
+        requested_by = data.get("requested_by") or data.get("admin_user_id")
+        items, item_error = _normalize_transfer_items(data)
+
+        if not all([from_branch_id, to_branch_id, requested_by]):
+            return jsonify({"message": "Missing required fields"}), 400
+
+        if item_error:
+            return jsonify({"message": item_error}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        requester = _get_user(cur, requested_by)
+        if not _is_active_admin(requester):
+            conn.rollback()
+            return jsonify({"message": "Only an active system admin can arrange transfer requests"}), 403
+
+        from_branch_type = _get_branch_type(cur, from_branch_id)
+        to_branch_type = _get_branch_type(cur, to_branch_id)
+
+        if not from_branch_type or not to_branch_type:
+            conn.rollback()
+            return jsonify({"message": "Source or destination branch not found"}), 404
+
+        if from_branch_type != "BRANCH" or to_branch_type != "BRANCH":
+            conn.rollback()
+            return jsonify({"message": "Admin branch transfer request must use branch source and branch destination"}), 400
+
+        if _to_int(from_branch_id) == _to_int(to_branch_id):
+            conn.rollback()
+            return jsonify({"message": "Source and destination branch cannot be the same"}), 400
+
+        valid_products, product_error = _validate_transfer_products(cur, items)
+        if not valid_products:
+            conn.rollback()
+            return jsonify(product_error), 404
+
+        for item in items:
+            cur.execute("""
+                SELECT quantity_in_stock
+                FROM inventory
+                WHERE product_id = %s
+                  AND branch_id = %s
+            """, (item["product_id"], from_branch_id))
+            source_stock = cur.fetchone()
+
+            if not source_stock or source_stock[0] < item["quantity"]:
+                conn.rollback()
+                return jsonify({
+                    "message": "Selected source branch does not have enough stock",
+                    "product_id": item["product_id"],
+                    "available_stock": source_stock[0] if source_stock else 0,
+                    "requested_quantity": item["quantity"],
+                }), 400
+
+            cur.execute("""
+                SELECT st.transfer_id, st.transfer_code
+                FROM stock_transfer st
+                JOIN transfer_detail td ON st.transfer_id = td.transfer_id
+                WHERE st.to_branch_id = %s
+                  AND st.from_branch_id = %s
+                  AND td.product_id = %s
+                  AND st.status IN (%s, %s, %s)
+                LIMIT 1
+            """, (
+                to_branch_id,
+                from_branch_id,
+                item["product_id"],
+                STATUS_MANAGER_REVIEW,
+                STATUS_SOURCE_APPROVAL,
+                STATUS_APPROVED,
+            ))
+            duplicate = cur.fetchone()
+
+            if duplicate:
+                conn.rollback()
+                return jsonify({
+                    "message": "An active transfer already exists for this product and source branch",
+                    "transfer_id": duplicate[0],
+                    "transfer_code": duplicate[1],
+                }), 409
+
+        cur.execute("""
+            INSERT INTO stock_transfer (
+                from_branch_id,
+                to_branch_id,
+                status,
+                requested_by,
+                reject_reason,
+                approved_at
+            )
+            VALUES (%s, %s, %s, %s, NULL, NULL)
+            RETURNING transfer_id, transfer_code
+        """, (from_branch_id, to_branch_id, STATUS_SOURCE_APPROVAL, requested_by))
+
+        new_transfer = cur.fetchone()
+
+        for item in items:
+            cur.execute("""
+                INSERT INTO transfer_detail (transfer_id, product_id, quantity)
+                VALUES (%s, %s, %s)
+            """, (new_transfer[0], item["product_id"], item["quantity"]))
+
+        conn.commit()
+        log_audit(
+            requested_by,
+            "ARRANGE_TRANSFER",
+            "Stock Transfer",
+            new_transfer[0],
+            f"Arranged Stock Transfer {new_transfer[1]} for source manager approval."
+        )
+
+        return jsonify({
+            "message": "Transfer request arranged and sent to source manager",
+            "transfer_id": new_transfer[0],
+            "transfer_code": new_transfer[1],
+            "items_count": len(items),
         }), 201
 
     except Exception as e:
@@ -307,20 +478,58 @@ def process_transfer_approval(transfer_id, approval_scope=None):
 
         # Get transfer info
         cur.execute("""
-            SELECT st.from_branch_id, st.to_branch_id, fb.branch_type, tb.branch_type, st.transfer_code
+            SELECT st.from_branch_id,
+                   st.to_branch_id,
+                   fb.branch_type,
+                   tb.branch_type,
+                   st.transfer_code,
+                   st.status
             FROM stock_transfer st
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
-            WHERE transfer_id = %s AND status = 'PENDING'
+            WHERE transfer_id = %s
+              AND st.status IN (%s, %s)
             FOR UPDATE OF st
-        """, (transfer_id,))
+        """, (transfer_id, STATUS_MANAGER_REVIEW, STATUS_SOURCE_APPROVAL))
         transfer = cur.fetchone()
 
         if not transfer:
             return jsonify({"message": "Transfer not found or already processed"}), 404
 
-        from_branch_id, to_branch_id, from_branch_type, to_branch_type, transfer_code = transfer
+        from_branch_id, to_branch_id, from_branch_type, to_branch_type, transfer_code, status = transfer
         approver = _get_user(cur, approved_by)
+
+        if status == STATUS_MANAGER_REVIEW:
+            if approval_scope != "MANAGER":
+                conn.rollback()
+                return jsonify({"message": "Destination manager review is required before source approval"}), 403
+
+            allowed, message = _can_review_destination_transfer(approver, to_branch_id)
+
+            if not allowed:
+                conn.rollback()
+                return jsonify({"message": message}), 403
+
+            cur.execute("""
+                UPDATE stock_transfer
+                SET status = %s,
+                    approved_by = %s,
+                    reject_reason = NULL,
+                    approved_at = CURRENT_TIMESTAMP
+                WHERE transfer_id = %s
+                  AND status = %s
+            """, (STATUS_SOURCE_APPROVAL, approved_by, transfer_id, STATUS_MANAGER_REVIEW))
+
+            conn.commit()
+            log_audit(
+                approved_by,
+                "REVIEW_TRANSFER",
+                "Stock Transfer",
+                transfer_id,
+                f"Reviewed Stock Transfer {transfer_code} and sent it for source approval."
+            )
+
+            return jsonify({"message": "Transfer reviewed and sent to source manager"}), 200
 
         if approval_scope == "MANAGER":
             allowed, message = _can_manager_approve_endpoint(
@@ -404,12 +613,12 @@ def process_transfer_approval(transfer_id, approval_scope=None):
         # Update status
         cur.execute("""
             UPDATE stock_transfer
-            SET status = 'APPROVED',
+            SET status = %s,
                 approved_by = %s,
                 reject_reason = NULL,
                 approved_at = CURRENT_TIMESTAMP
             WHERE transfer_id = %s
-        """, (approved_by, transfer_id))
+        """, (STATUS_APPROVED, approved_by, transfer_id))
 
         conn.commit()
         log_audit(
@@ -464,23 +673,35 @@ def process_transfer_rejection(transfer_id):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT st.from_branch_id, fb.branch_type, tb.branch_type, st.transfer_code
+            SELECT st.from_branch_id,
+                   st.to_branch_id,
+                   fb.branch_type,
+                   tb.branch_type,
+                   st.transfer_code,
+                   st.status
             FROM stock_transfer st
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
-            WHERE st.transfer_id = %s AND st.status = 'PENDING'
+            WHERE st.transfer_id = %s
+              AND st.status IN (%s, %s)
             FOR UPDATE OF st
-        """, (transfer_id,))
+        """, (transfer_id, STATUS_MANAGER_REVIEW, STATUS_SOURCE_APPROVAL))
 
         transfer = cur.fetchone()
 
         if not transfer:
             return jsonify({"message": "Transfer not found or already processed"}), 404
 
-        from_branch_id, from_branch_type, to_branch_type, transfer_code = transfer
+        from_branch_id, to_branch_id, from_branch_type, to_branch_type, transfer_code, status = transfer
         approver = _get_user(cur, approved_by)
 
-        if request.path.startswith("/manager/"):
+        if status == STATUS_MANAGER_REVIEW:
+            if not request.path.startswith("/manager/"):
+                conn.rollback()
+                return jsonify({"message": "Destination manager review is required before source rejection"}), 403
+
+            allowed, message = _can_review_destination_transfer(approver, to_branch_id)
+        elif request.path.startswith("/manager/"):
             allowed, message = _can_manager_approve_endpoint(
                 approver,
                 from_branch_id,
@@ -507,12 +728,13 @@ def process_transfer_rejection(transfer_id):
 
         cur.execute("""
             UPDATE stock_transfer
-            SET status = 'REJECTED',
+            SET status = %s,
                 approved_by = %s,
                 reject_reason = %s,
                 approved_at = CURRENT_TIMESTAMP
-            WHERE transfer_id = %s AND status = 'PENDING'
-        """, (approved_by, reject_reason, transfer_id))
+            WHERE transfer_id = %s
+              AND status = %s
+        """, (STATUS_REJECTED, approved_by, reject_reason, transfer_id, status))
 
         conn.commit()
         log_audit(
@@ -906,12 +1128,18 @@ def get_manager_stock_transfer_approvals():
             FROM stock_transfer st
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
-            WHERE st.status = 'PENDING'
-              AND fb.branch_type = 'BRANCH'
-              AND tb.branch_type = 'BRANCH'
-              AND st.from_branch_id = %s
+            WHERE (
+                    st.status = %s
+                    AND st.to_branch_id = %s
+                  )
+               OR (
+                    st.status = %s
+                    AND fb.branch_type = 'BRANCH'
+                    AND tb.branch_type = 'BRANCH'
+                    AND st.from_branch_id = %s
+                  )
             ORDER BY st.transfer_date DESC, st.transfer_id DESC
-        """, (branch_id,))
+        """, (STATUS_MANAGER_REVIEW, branch_id, STATUS_SOURCE_APPROVAL, branch_id))
 
         rows = cur.fetchall()
         approvals = []
@@ -1216,6 +1444,8 @@ def auto_suggest_transfer():
 
         product_id = data.get("product_id")
         to_branch_id = data.get("to_branch_id")
+        requested_from_branch_id = data.get("from_branch_id")
+        requested_quantity = data.get("quantity")
         requested_by = data.get("requested_by")
 
         if product_id is None:
@@ -1229,6 +1459,7 @@ def auto_suggest_transfer():
 
         conn = get_connection()
         cur = conn.cursor()
+        _ensure_branch_status_column(cur)
 
         requester = _get_user(cur, requested_by)
 
@@ -1283,7 +1514,10 @@ def auto_suggest_transfer():
 
         request_qty = reorder_level - current_stock
 
-        if request_qty <= 0:
+        if requested_quantity is not None:
+            request_qty = _to_int(requested_quantity)
+
+        if not request_qty or request_qty <= 0:
             request_qty = reorder_level
 
         # Prevent duplicate pending/approved request for same product and destination branch
@@ -1293,7 +1527,7 @@ def auto_suggest_transfer():
             JOIN transfer_detail td ON st.transfer_id = td.transfer_id
             WHERE st.to_branch_id = %s
               AND td.product_id = %s
-              AND st.status IN ('PENDING', 'APPROVED')
+              AND st.status IN ('PENDING', 'PENDING_SOURCE', 'APPROVED')
             LIMIT 1
         """, (to_branch_id, product_id))
 
@@ -1306,19 +1540,31 @@ def auto_suggest_transfer():
                 "message": "A pending or approved transfer already exists for this product"
             }), 400
 
-        # Prefer warehouse stock first, then the highest-stock source branch.
-        cur.execute("""
-            SELECT i.branch_id, i.quantity_in_stock
-            FROM inventory i
-            JOIN branch b ON i.branch_id = b.branch_id
-            WHERE i.product_id = %s
-              AND i.branch_id <> %s
-              AND i.quantity_in_stock >= %s
-            ORDER BY
-              CASE WHEN b.branch_type = 'WAREHOUSE' THEN 0 ELSE 1 END,
-              i.quantity_in_stock DESC
-            LIMIT 1
-        """, (product_id, to_branch_id, request_qty))
+        if requested_from_branch_id is not None:
+            cur.execute("""
+                SELECT i.branch_id, i.quantity_in_stock
+                FROM inventory i
+                JOIN branch b ON i.branch_id = b.branch_id
+                WHERE i.product_id = %s
+                  AND i.branch_id = %s
+                  AND i.branch_id <> %s
+                  AND i.quantity_in_stock >= %s
+                  AND b.status = 'ACTIVE'
+                LIMIT 1
+            """, (product_id, requested_from_branch_id, to_branch_id, request_qty))
+        else:
+            # Fallback for older clients: pick the highest-stock eligible source.
+            cur.execute("""
+                SELECT i.branch_id, i.quantity_in_stock
+                FROM inventory i
+                JOIN branch b ON i.branch_id = b.branch_id
+                WHERE i.product_id = %s
+                  AND i.branch_id <> %s
+                  AND i.quantity_in_stock >= %s
+                  AND b.status = 'ACTIVE'
+                ORDER BY i.quantity_in_stock DESC
+                LIMIT 1
+            """, (product_id, to_branch_id, request_qty))
 
         source_row = cur.fetchone()
 
@@ -1326,7 +1572,7 @@ def auto_suggest_transfer():
             cur.close()
             conn.close()
             return jsonify({
-                "message": "No branch has enough stock for this product"
+                "message": "Selected source branch does not have enough stock for this product"
             }), 400
 
         from_branch_id = source_row[0]
@@ -1340,7 +1586,7 @@ def auto_suggest_transfer():
                 reject_reason,
                 approved_at
             )
-            VALUES (%s, %s, 'PENDING', %s, NULL, NULL)
+            VALUES (%s, %s, 'PENDING_SOURCE', %s, NULL, NULL)
             RETURNING transfer_id, transfer_code
         """, (from_branch_id, to_branch_id, requested_by))
 
