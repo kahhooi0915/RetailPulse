@@ -192,6 +192,11 @@ export default function AdminWarehouseManagement() {
     };
 
     const goToPurchase = (item) => {
+        if (item.has_active_purchase && item.active_purchase_id) {
+            navigate(`/admin/purchases?purchase_id=${item.active_purchase_id}`);
+            return;
+        }
+
         if (item.status === "HEALTHY") return;
 
         navigate(`/admin/purchases?product_id=${item.product_id}&branch_id=${item.branch_id}`);
@@ -412,22 +417,31 @@ export default function AdminWarehouseManagement() {
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Warehouse Name</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Supplier Contact</th>
                                     <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Quantity In Stock</th>
-                                    <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Reorder Level</th>
+                                    <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Warehouse Reorder</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Status</th>
                                     <th className="border-b pl-5 text-right text-xs font-extrabold uppercase">Action</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {loading ? (
-                                    <EmptyRow colSpan={8} text="Loading warehouse stock..." />
+                                    <EmptyRow colSpan={9} text="Loading warehouse stock..." />
                                 ) : paginatedStock.length === 0 ? (
-                                    <EmptyRow colSpan={8} text="No warehouse stock records found." />
+                                    <EmptyRow colSpan={9} text="No warehouse stock records found." />
                                 ) : (
-                                    paginatedStock.map((item) => (
-                                        <tr
-                                            key={`${item.product_id}-${item.branch_id}`}
-                                            className="border-b last:border-none hover:bg-[#f8fcff]"
-                                        >
+                                    paginatedStock.map((item) => {
+                                        const hasActivePurchase = item.has_active_purchase && item.active_purchase_id;
+                                        const isPurchaseDisabled = item.status === "HEALTHY" && !hasActivePurchase;
+                                        const purchaseButtonText = hasActivePurchase
+                                            ? `View ${item.active_purchase_code || "Purchase"}`
+                                            : item.status === "HEALTHY"
+                                                ? "Enough Stock"
+                                                : "Add Purchase";
+
+                                        return (
+                                            <tr
+                                                key={`${item.product_id}-${item.branch_id}`}
+                                                className="border-b last:border-none hover:bg-[#f8fcff]"
+                                            >
                                             <td className="border-b border-blue-50 py-4 pr-5 text-xs font-extrabold uppercase tracking-wide text-[#6f85a3]">
                                                 {item.product_code}
                                             </td>
@@ -468,22 +482,26 @@ export default function AdminWarehouseManagement() {
                                                         <RefreshCcw size={15} />
                                                         Distribute
                                                     </button>
-                                                    <button
-                                                        onClick={() => goToPurchase(item)}
-                                                        disabled={item.status === "HEALTHY"}
-                                                        className={`inline-flex min-w-[122px] items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition ${
-                                                            item.status === "HEALTHY"
-                                                                ? "cursor-not-allowed bg-gray-100 text-gray-400"
-                                                                : "bg-[#0c2f73] text-white shadow-sm hover:bg-[#103986] hover:shadow"
-                                                        }`}
-                                                    >
-                                                        <ShoppingCart size={15} />
-                                                        {item.status === "HEALTHY" ? "Enough Stock" : "Add Purchase"}
-                                                    </button>
+                                                        <button
+                                                            onClick={() => goToPurchase(item)}
+                                                            disabled={isPurchaseDisabled}
+                                                            className={`inline-flex min-w-[122px] items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition ${
+                                                                isPurchaseDisabled
+                                                                    ? "cursor-not-allowed bg-gray-100 text-gray-400"
+                                                                    : hasActivePurchase
+                                                                        ? "bg-amber-50 text-amber-700 shadow-sm hover:bg-amber-100"
+                                                                        : "bg-[#0c2f73] text-white shadow-sm hover:bg-[#103986] hover:shadow"
+                                                            }`}
+                                                            title={hasActivePurchase ? `Open ${item.active_purchase_code}` : undefined}
+                                                        >
+                                                            {hasActivePurchase ? <Eye size={15} /> : <ShoppingCart size={15} />}
+                                                            {purchaseButtonText}
+                                                        </button>
                                                 </div>
                                             </td>
                                         </tr>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </tbody>
                         </table>

@@ -95,12 +95,14 @@ export const sidebarItems = {
                     icon: TrendingUp,
                     path: "/admin/reports",
                 },
-                {
-                    label: "Activity Log",
-                    icon: ClipboardList,
-                    path: "/admin/activity-log",
-                },
             ],
+        },
+
+        // Standalone item
+        {
+            label: "Activity Log",
+            icon: ClipboardList,
+            path: "/admin/activity-log",
         },
 
         // Standalone item

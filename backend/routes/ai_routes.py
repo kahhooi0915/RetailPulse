@@ -77,6 +77,24 @@ def _log_gemini_http_error(error):
 def _detect_intent(message):
     text = (message or "").lower()
 
+    top_seller_requested = re.search(
+        r"\b(top|best|highest|leader|number\s*1|no\.?\s*1)\b",
+        text,
+    ) and ("seller" in text or "selling" in text or "product" in text)
+    conditional_terms = [
+        "morning",
+        "afternoon",
+        "evening",
+        "night",
+        "branch",
+        "ayer keroh",
+        "melaka sentral",
+        "bukit katil",
+        "warehouse",
+    ]
+    if top_seller_requested and any(term in text for term in conditional_terms):
+        return "conditional_top_seller"
+
     if re.search(r"\b(top|best|highest|leader|number\s*1|no\.?\s*1)\b", text) and (
         "seller" in text or "selling" in text or "forecast" in text or "next" in text
     ):
@@ -95,6 +113,152 @@ def _detect_intent(message):
         return "sales_summary"
 
     return "unknown"
+
+
+def _normalize_search_text(value):
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _extract_time_filter(message):
+    text = _normalize_search_text(message)
+    time_filters = {
+        "morning": {
+            "label": "morning",
+            "start_hour": 6,
+            "end_hour": 11,
+            "description": "06:00-11:59",
+        },
+        "afternoon": {
+            "label": "afternoon",
+            "start_hour": 12,
+            "end_hour": 16,
+            "description": "12:00-16:59",
+        },
+        "evening": {
+            "label": "evening",
+            "start_hour": 17,
+            "end_hour": 20,
+            "description": "17:00-20:59",
+        },
+        "night": {
+            "label": "night",
+            "start_hour": 21,
+            "end_hour": 23,
+            "description": "21:00-23:59",
+        },
+    }
+
+    for keyword, time_filter in time_filters.items():
+        if keyword in text:
+            return time_filter
+    return None
+
+
+def _branch_matches_question(branch_name, question_text):
+    branch_text = _normalize_search_text(branch_name)
+    branch_without_suffix = re.sub(r"\bbranch\b", "", branch_text).strip()
+    question_text = _normalize_search_text(question_text)
+
+    return branch_text in question_text or (
+        branch_without_suffix and branch_without_suffix in question_text
+    )
+
+
+def _fetch_matching_branch(question):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT branch_id, branch_name, branch_code
+            FROM branch
+            ORDER BY branch_name
+        """)
+        branches = cur.fetchall()
+    finally:
+        _close(conn, cur)
+
+    for branch_id, branch_name, branch_code in branches:
+        if _branch_matches_question(branch_name, question) or _branch_matches_question(branch_code, question):
+            return {
+                "branch_id": branch_id,
+                "branch_name": branch_name,
+                "branch_code": branch_code,
+            }
+    return None
+
+
+def _fetch_conditional_top_seller(question):
+    branch = _fetch_matching_branch(question)
+    time_filter = _extract_time_filter(question)
+
+    missing_filters = []
+    if not branch:
+        missing_filters.append("branch")
+    if not time_filter:
+        missing_filters.append("time period")
+
+    if missing_filters:
+        return {
+            "intent": "conditional_top_seller",
+            "data_available": False,
+            "summary": "A branch and time period are required for conditional top-seller questions.",
+            "missing_filters": missing_filters,
+            "supported_time_periods": ["morning", "afternoon", "evening", "night"],
+        }
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                p.product_code,
+                p.product_name,
+                SUM(sd.quantity) AS units_sold,
+                COALESCE(SUM(sd.subtotal), 0) AS revenue,
+                COUNT(DISTINCT s.sale_id) AS sales_count
+            FROM sale s
+            JOIN sale_detail sd ON s.sale_id = sd.sale_id
+            JOIN product p ON sd.product_id = p.product_id
+            WHERE s.branch_id = %s
+              AND EXTRACT(HOUR FROM s.sale_date) BETWEEN %s AND %s
+            GROUP BY p.product_id, p.product_code, p.product_name
+            ORDER BY units_sold DESC, revenue DESC, p.product_name
+            LIMIT 5
+            """,
+            (
+                branch["branch_id"],
+                time_filter["start_hour"],
+                time_filter["end_hour"],
+            ),
+        )
+        rows = cur.fetchall()
+    finally:
+        _close(conn, cur)
+
+    ranked_products = [
+        {
+            "product_code": row[0],
+            "product_name": row[1],
+            "units_sold": row[2],
+            "revenue": float(_to_number(row[3]) or 0),
+            "sales_count": row[4],
+        }
+        for row in rows
+    ]
+
+    return {
+        "intent": "conditional_top_seller",
+        "ranking_basis": "units_sold",
+        "branch_name": branch["branch_name"],
+        "branch_code": branch["branch_code"],
+        "time_period": time_filter["label"],
+        "time_range": time_filter["description"],
+        "top_product": ranked_products[0] if ranked_products else None,
+        "ranked_products": ranked_products,
+    }
 
 
 def _fetch_inventory_rows(intent):
@@ -334,7 +498,9 @@ def _fetch_branch_attention_summary():
     }
 
 
-def _build_data_context(intent):
+def _build_data_context(intent, message=None):
+    if intent == "conditional_top_seller":
+        return _fetch_conditional_top_seller(message or "")
     if intent == "top_seller_forecast":
         forecast_summary = get_forecast_summary()
         official_summary = {
@@ -484,7 +650,44 @@ def _format_rm(value):
 
 
 def _format_fallback_answer(intent, context):
-    if not context or context.get("data_available") is False:
+    if not context:
+        return None
+
+    if intent == "conditional_top_seller":
+        if context.get("data_available") is False:
+            missing = ", ".join(context.get("missing_filters") or [])
+            return (
+                "I need a specific branch and time period to answer that conditional top-seller question. "
+                f"Missing: {missing or 'branch or time period'}. Supported time periods are morning, "
+                "afternoon, evening, and night."
+            )
+
+        top = context.get("top_product")
+        if not top:
+            return (
+                f"I could not find sales records for {context.get('branch_name', 'that branch')} "
+                f"during the {context.get('time_period', 'selected time period')}."
+            )
+
+        lines = [
+            (
+                f"**{top['product_name']}** is the top-selling product at "
+                f"**{context['branch_name']}** during the **{context['time_period']}** "
+                f"({context['time_range']}), with **{top['units_sold']}** units sold "
+                f"and revenue of **{_format_rm(top['revenue'])}**."
+            ),
+            "",
+            "| Product | Units sold | Sales | Revenue |",
+            "|---|---:|---:|---:|",
+        ]
+        for row in (context.get("ranked_products") or [])[:5]:
+            lines.append(
+                f"| {row['product_name']} | {row['units_sold']} | "
+                f"{row['sales_count']} | {_format_rm(row['revenue'])} |"
+            )
+        return "\n".join(lines)
+
+    if context.get("data_available") is False:
         return None
 
     if intent == "branch_attention":
@@ -601,7 +804,7 @@ def ai_chat():
 
     try:
         try:
-            context = _build_data_context(intent)
+            context = _build_data_context(intent, question)
         except Exception as e:
             print("ERROR /api/ai/chat data context type:", type(e).__name__)
             print("ERROR /api/ai/chat data context message:", str(e))

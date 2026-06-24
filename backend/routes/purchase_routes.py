@@ -1,3 +1,5 @@
+import re
+
 from flask import Blueprint, request, jsonify
 from db import get_connection
 from audit import get_actor_user_id, log_audit
@@ -15,6 +17,53 @@ def normalize_bool(value):
         return value.strip().lower() in ("true", "1", "yes", "preferred")
 
     return bool(value)
+
+
+def normalize_supplier_phone(phone):
+    phone = str(phone or "").strip()
+
+    if not phone:
+        return ""
+
+    digits = re.sub(r"\D", "", phone)
+    if 9 <= len(digits) <= 11:
+        phone = f"{digits[:3]}-{digits[3:]}"
+
+    if not re.fullmatch(r"\d{3}-\d{6,8}", phone):
+        raise ValueError("Phone number must use Malaysia format, like 012-3456789")
+
+    return phone
+
+
+def validate_supplier_uniqueness(cur, supplier_name, phone, email, supplier_id=None):
+    supplier_name = str(supplier_name or "").strip()
+    email = str(email or "").strip()
+
+    cur.execute("""
+        SELECT 1 FROM supplier
+        WHERE LOWER(supplier_name) = LOWER(%s)
+          AND (%s IS NULL OR supplier_id <> %s)
+    """, (supplier_name, supplier_id, supplier_id))
+    if cur.fetchone():
+        raise ValueError("Supplier name already exists")
+
+    if phone:
+        cur.execute("""
+            SELECT 1 FROM supplier
+            WHERE phone = %s
+              AND (%s IS NULL OR supplier_id <> %s)
+        """, (phone, supplier_id, supplier_id))
+        if cur.fetchone():
+            raise ValueError("Phone number already exists")
+
+    if email:
+        cur.execute("""
+            SELECT 1 FROM supplier
+            WHERE LOWER(email) = LOWER(%s)
+              AND (%s IS NULL OR supplier_id <> %s)
+        """, (email, supplier_id, supplier_id))
+        if cur.fetchone():
+            raise ValueError("Email already exists")
 
 
 def find_active_purchase_for_product_branch(cur, product_id, branch_id):
@@ -158,7 +207,7 @@ def create_supplier():
 
         supplier_name = data.get("supplier_name")
         contact_person = data.get("contact_person")
-        phone = data.get("phone")
+        phone = normalize_supplier_phone(data.get("phone"))
         email = data.get("email")
         address = data.get("address")
         status = data.get("status", "ACTIVE")
@@ -168,6 +217,7 @@ def create_supplier():
 
         conn = get_connection()
         cur = conn.cursor()
+        validate_supplier_uniqueness(cur, supplier_name, phone, email)
 
         cur.execute("""
             INSERT INTO supplier (
@@ -208,6 +258,9 @@ def create_supplier():
             "supplier_code": row[1]
         }), 201
 
+    except ValueError as e:
+        return jsonify({"message": str(e)}), 400
+
     except Exception as e:
         print("ERROR create_supplier:", e)
         return jsonify({"message": str(e)}), 500
@@ -221,13 +274,14 @@ def update_supplier(supplier_id):
 
         supplier_name = data.get("supplier_name")
         contact_person = data.get("contact_person")
-        phone = data.get("phone")
+        phone = normalize_supplier_phone(data.get("phone"))
         email = data.get("email")
         address = data.get("address")
         status = data.get("status", "ACTIVE")
 
         conn = get_connection()
         cur = conn.cursor()
+        validate_supplier_uniqueness(cur, supplier_name, phone, email, supplier_id)
 
         cur.execute("""
             UPDATE supplier
@@ -266,6 +320,9 @@ def update_supplier(supplier_id):
         conn.close()
 
         return jsonify({"message": "Supplier updated successfully"}), 200
+
+    except ValueError as e:
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         print("ERROR update_supplier:", e)

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -197,6 +198,20 @@ def _pg_connection_args(database=None):
     ]
 
 
+def _validate_database_name(database_name):
+    if not database_name:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", database_name))
+
+
+def _quote_identifier(identifier):
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _quote_literal(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _verify_backup_file(filename):
     file_path = _safe_backup_path(filename)
     if not file_path:
@@ -337,6 +352,7 @@ def restore_backup():
     data = request.get_json(silent=True) or {}
     filename = data.get("filename")
     confirm = data.get("confirm")
+    restore_mode = data.get("restore_mode") or "current_database"
     if confirm != "RESTORE":
         return jsonify({"message": "Restore confirmation is required"}), 400
 
@@ -345,6 +361,107 @@ def restore_backup():
         return jsonify({"message": verify_error}), 400
 
     try:
+        if restore_mode == "separate_database":
+            target_database = data.get("target_database") or f"{Config.DB_NAME}_restore"
+            if not _validate_database_name(target_database):
+                return jsonify({"message": "Invalid restore database name"}), 400
+            if target_database == Config.DB_NAME:
+                return jsonify({"message": "Separate restore database cannot be the current database"}), 400
+
+            maintenance_database = os.getenv("PG_MAINTENANCE_DB", "postgres")
+            target_identifier = _quote_identifier(target_database)
+            target_literal = _quote_literal(target_database)
+            setup_commands = [
+                (
+                    "Terminate restore database connections",
+                    [
+                        _psql_command(),
+                        *_pg_connection_args(maintenance_database),
+                        "-v",
+                        "ON_ERROR_STOP=1",
+                        "-c",
+                        (
+                            "SELECT pg_terminate_backend(pid) "
+                            "FROM pg_stat_activity "
+                            f"WHERE datname = {target_literal} AND pid <> pg_backend_pid();"
+                        ),
+                    ],
+                ),
+                (
+                    "Drop restore database",
+                    [
+                        _psql_command(),
+                        *_pg_connection_args(maintenance_database),
+                        "-v",
+                        "ON_ERROR_STOP=1",
+                        "-c",
+                        f"DROP DATABASE IF EXISTS {target_identifier};",
+                    ],
+                ),
+                (
+                    "Create restore database",
+                    [
+                        _psql_command(),
+                        *_pg_connection_args(maintenance_database),
+                        "-v",
+                        "ON_ERROR_STOP=1",
+                        "-c",
+                        f"CREATE DATABASE {target_identifier};",
+                    ],
+                ),
+            ]
+
+            for label, command in setup_commands:
+                setup_result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    env=_database_env(),
+                    timeout=300,
+                )
+                if setup_result.returncode != 0:
+                    return jsonify({"message": setup_result.stderr.strip() or f"{label} failed"}), 500
+
+            restore_command = [
+                _psql_command(),
+                *_pg_connection_args(target_database),
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                file_path,
+            ]
+            started_at = time.perf_counter()
+            restore_result = subprocess.run(
+                restore_command,
+                capture_output=True,
+                text=True,
+                env=_database_env(),
+                timeout=600,
+            )
+            duration_seconds = round(time.perf_counter() - started_at, 2)
+            if restore_result.returncode != 0:
+                return jsonify({
+                    "message": restore_result.stderr.strip() or "Database restore failed",
+                    "target_database": target_database,
+                }), 500
+
+            log_audit(
+                user_id,
+                "RESTORE",
+                "Database Backup",
+                None,
+                f"Restored database from backup file {filename} into separate database {target_database}.",
+            )
+            return jsonify({
+                "message": "Database restored successfully into separate database",
+                "restored_backup": filename,
+                "target_database": target_database,
+                "duration_seconds": duration_seconds,
+            }), 200
+
+        if restore_mode != "current_database":
+            return jsonify({"message": "Invalid restore mode"}), 400
+
         safety_filename, _ = _create_backup_file("pre_restore")
 
         reset_command = [
@@ -423,3 +540,37 @@ def download_backup(filename):
         return jsonify({"message": "Backup file not found"}), 404
 
     return send_file(file_path, as_attachment=True, download_name=filename)
+
+
+@backup_bp.route("/admin/backups/<path:filename>", methods=["DELETE"])
+def delete_backup(filename):
+    user_id, error = _require_system_admin()
+    if error:
+        return error
+
+    file_path = _safe_backup_path(filename)
+    if not file_path:
+        return jsonify({"message": "Invalid backup filename"}), 400
+    if not os.path.exists(file_path):
+        return jsonify({"message": "Backup file not found"}), 404
+
+    backups = _list_backups()
+    if len(backups) <= 1:
+        return jsonify({"message": "Cannot delete the only available backup"}), 400
+
+    try:
+        os.remove(file_path)
+        metadata_file = _metadata_path(filename)
+        if os.path.exists(metadata_file):
+            os.remove(metadata_file)
+
+        log_audit(
+            user_id,
+            "DELETE",
+            "Database Backup",
+            None,
+            f"Deleted database backup file {filename}.",
+        )
+        return jsonify({"message": "Backup deleted successfully", "deleted_backup": filename}), 200
+    except OSError as e:
+        return jsonify({"message": f"Backup file could not be deleted: {e}"}), 500

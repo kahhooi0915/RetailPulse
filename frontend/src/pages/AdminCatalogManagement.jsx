@@ -6,18 +6,22 @@ import {
     Search,
     Plus,
     Pencil,
+    Power,
+    PowerOff,
     Trash2,
     X,
     Eye,
     Tag,
     Package,
     ImagePlus,
+    AlertTriangle,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatCentsInput, formatMoneyValue } from "../utils/moneyInput";
 
 const API_BASE = "http://localhost:5000";
+const DEFAULT_PRODUCT_IMAGE_URL = `${API_BASE}/static/images/products/default.webp`;
 
 const emptyCategory = {
     category_name: "",
@@ -29,14 +33,56 @@ const emptyProduct = {
     category_id: "",
     selling_price: "",
     reorder_level: "",
+    warehouse_reorder_level: "",
     status: "ACTIVE",
     description: "",
     product_image: null,
     suppliers: [],
 };
 
-const getProductImageUrl = (productId) => {
-    return `${API_BASE}/admin/products/${productId}/image`;
+const getProductImageUrl = (productImage, productId) => {
+    const imagePath = String(productImage || "").trim();
+
+    if (imagePath) {
+        if (/^https?:\/\//i.test(imagePath)) return imagePath;
+        return `${API_BASE}${imagePath.startsWith("/") ? imagePath : `/${imagePath}`}`;
+    }
+
+    return productId ? `${API_BASE}/admin/products/${productId}/image` : DEFAULT_PRODUCT_IMAGE_URL;
+};
+
+const sanitizeNonNegativeIntegerInput = (value) => {
+    if (value === "") return "";
+
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) return "";
+
+    return String(Math.max(0, Math.floor(numberValue)));
+};
+
+const normalizeProductName = (value) => {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+};
+
+const getProductNameSimilarity = (left, right) => {
+    const normalizedLeft = normalizeProductName(left);
+    const normalizedRight = normalizeProductName(right);
+
+    if (!normalizedLeft || !normalizedRight) return 0;
+    if (normalizedLeft === normalizedRight) return 1;
+    if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+        return 0.9;
+    }
+
+    const leftTokens = new Set(normalizedLeft.split(" ").filter(Boolean));
+    const rightTokens = new Set(normalizedRight.split(" ").filter(Boolean));
+    const sharedTokens = [...leftTokens].filter((token) => rightTokens.has(token));
+    const totalTokens = new Set([...leftTokens, ...rightTokens]).size;
+
+    return totalTokens > 0 ? sharedTokens.length / totalTokens : 0;
 };
 
 export default function AdminCatalogManagement() {
@@ -150,6 +196,22 @@ export default function AdminCatalogManagement() {
         );
     }, [products, searchTerm]);
 
+    const similarProducts = useMemo(() => {
+        const productName = productForm.product_name.trim();
+
+        if (productName.length < 3) return [];
+
+        return products
+            .filter((item) => Number(item.product_id) !== Number(editProduct?.product_id))
+            .map((item) => ({
+                ...item,
+                similarity: getProductNameSimilarity(productName, item.product_name),
+            }))
+            .filter((item) => item.similarity >= 0.45)
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 4);
+    }, [products, productForm.product_name, editProduct]);
+
     const activeCategories = categories.filter((item) => item.status === "ACTIVE").length;
     const inactiveProducts = products.filter((item) => item.status === "INACTIVE").length;
 
@@ -182,6 +244,7 @@ export default function AdminCatalogManagement() {
             category_id: product.category_id ? String(product.category_id) : "",
             selling_price: formatMoneyValue(product.selling_price),
             reorder_level: product.reorder_level ?? "",
+            warehouse_reorder_level: product.warehouse_reorder_level ?? product.reorder_level ?? "",
             status: product.status || "ACTIVE",
             description: product.description || "",
             product_image: null,
@@ -279,10 +342,22 @@ export default function AdminCatalogManagement() {
         if (!productForm.product_name.trim()) return showToast("Product name is required.", "error");
         if (!productForm.category_id) return showToast("Category is required.", "error");
         if (productForm.selling_price === "") return showToast("Selling price is required.", "error");
-        if (productForm.reorder_level === "") return showToast("Reorder level is required.", "error");
+        if (productForm.reorder_level === "") return showToast("Branch reorder level is required.", "error");
+        if (productForm.warehouse_reorder_level === "") return showToast("Warehouse reorder level is required.", "error");
         if (Number(productForm.selling_price) < 0) return showToast("Selling price cannot be negative.", "error");
-        if (Number(productForm.reorder_level) < 0) return showToast("Reorder level cannot be negative.", "error");
-        if (productForm.suppliers.length === 0) return showToast("At least one supplier assignment is required.", "error");
+        if (Number(productForm.reorder_level) < 0) return showToast("Branch reorder level cannot be negative.", "error");
+        if (Number(productForm.warehouse_reorder_level) < 0) return showToast("Warehouse reorder level cannot be negative.", "error");
+
+        if (similarProducts.length > 0) {
+            const similarNames = similarProducts
+                .map((item) => `${item.product_code || `PID-${item.product_id}`} - ${item.product_name}`)
+                .join("\n");
+            const shouldContinue = window.confirm(
+                `Similar product(s) already exist:\n\n${similarNames}\n\nDo you still want to save this product?`
+            );
+
+            if (!shouldContinue) return;
+        }
 
         for (const supplier of productForm.suppliers) {
             if (supplier.purchase_price === "" || Number(supplier.purchase_price) < 0) {
@@ -302,6 +377,7 @@ export default function AdminCatalogManagement() {
             formData.append("category_id", productForm.category_id);
             formData.append("selling_price", productForm.selling_price);
             formData.append("reorder_level", productForm.reorder_level);
+            formData.append("warehouse_reorder_level", productForm.warehouse_reorder_level);
             formData.append("status", productForm.status);
             formData.append("description", productForm.description || "");
             formData.append("actor_user_id", user.user_id);
@@ -370,12 +446,16 @@ export default function AdminCatalogManagement() {
         }
     };
 
-    const deleteProduct = async (product) => {
-        if (!window.confirm(`Delete ${product.product_name}?`)) return;
+    const toggleProductStatus = async (product) => {
+        const isActive = product.status === "ACTIVE";
+        const nextAction = isActive ? "deactivate" : "activate";
+        const nextStatusText = isActive ? "deactivate" : "activate";
+
+        if (!window.confirm(`${nextStatusText.charAt(0).toUpperCase() + nextStatusText.slice(1)} ${product.product_name}?`)) return;
 
         try {
-            const res = await fetch(`${API_BASE}/admin/products/${product.product_id}`, {
-                method: "DELETE",
+            const res = await fetch(`${API_BASE}/admin/products/${product.product_id}/${nextAction}`, {
+                method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_user_id: user.user_id }),
             });
@@ -383,15 +463,15 @@ export default function AdminCatalogManagement() {
             const data = await res.json();
 
             if (!res.ok) {
-                showToast(data.message || "Failed to delete product.", "error");
+                showToast(data.message || `Failed to ${nextAction} product.`, "error");
                 return;
             }
 
-            showToast("Product deleted successfully.");
+            showToast(data.message || `Product ${nextStatusText}d successfully.`);
             loadData();
         } catch (error) {
             console.error(error);
-            showToast("Failed to delete product.", "error");
+            showToast(`Failed to ${nextAction} product.`, "error");
         }
     };
 
@@ -496,7 +576,7 @@ export default function AdminCatalogManagement() {
                                 <ProductTable
                                     products={filteredProducts}
                                     onEdit={openEditProduct}
-                                    onDelete={deleteProduct}
+                                    onToggleStatus={toggleProductStatus}
                                 />
                             ) : (
                                 <CategoryTable
@@ -564,6 +644,8 @@ export default function AdminCatalogManagement() {
                             placeholder="Example: Mineral Water 500ml"
                         />
 
+                        <SimilarProductsWarning products={similarProducts} />
+
                         <FormSelect
                             label="Category"
                             value={productForm.category_id}
@@ -579,7 +661,7 @@ export default function AdminCatalogManagement() {
                             ]}
                         />
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-3 gap-4">
                             <MoneyInput
                                 label="Selling Price"
                                 value={productForm.selling_price}
@@ -590,13 +672,33 @@ export default function AdminCatalogManagement() {
                             />
 
                             <FormInput
-                                label="Reorder Level"
+                                label="Branch Reorder Level"
                                 type="number"
+                                min={0}
+                                step={1}
                                 value={productForm.reorder_level}
                                 onChange={(value) =>
-                                    setProductForm({ ...productForm, reorder_level: value })
+                                    setProductForm({
+                                        ...productForm,
+                                        reorder_level: sanitizeNonNegativeIntegerInput(value),
+                                    })
                                 }
                                 placeholder="10"
+                            />
+
+                            <FormInput
+                                label="Warehouse Reorder Level"
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={productForm.warehouse_reorder_level}
+                                onChange={(value) =>
+                                    setProductForm({
+                                        ...productForm,
+                                        warehouse_reorder_level: sanitizeNonNegativeIntegerInput(value),
+                                    })
+                                }
+                                placeholder="1000"
                             />
                         </div>
 
@@ -635,6 +737,7 @@ export default function AdminCatalogManagement() {
 
                                 <ProductImage
                                     productId={editProduct.product_id}
+                                    productImage={editProduct.product_image}
                                     productName={editProduct.product_name}
                                     className="h-36 w-full rounded-2xl object-cover"
                                 />
@@ -683,6 +786,7 @@ export default function AdminCatalogManagement() {
                                 >
                                     <ProductImage
                                         productId={item.product_id}
+                                        productImage={item.product_image}
                                         productName={item.product_name}
                                         className="mb-3 h-28 w-full rounded-2xl object-cover"
                                     />
@@ -808,7 +912,7 @@ export default function AdminCatalogManagement() {
     );
 }
 
-function ProductTable({ products, onEdit, onDelete }) {
+function ProductTable({ products, onEdit, onToggleStatus }) {
     return (
         <div className="mt-6 overflow-hidden rounded-2xl border border-blue-50">
             <table className="w-full text-left text-sm">
@@ -818,7 +922,8 @@ function ProductTable({ products, onEdit, onDelete }) {
                         <th className="px-4 py-3">Image</th>
                         <th className="px-4 py-3">Category</th>
                         <th className="px-4 py-3">Price</th>
-                        <th className="px-4 py-3">Reorder</th>
+                        <th className="px-4 py-3">Branch Reorder</th>
+                        <th className="px-4 py-3">Warehouse Reorder</th>
                         <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3 text-right">Action</th>
                     </tr>
@@ -839,6 +944,7 @@ function ProductTable({ products, onEdit, onDelete }) {
                             <td className="px-4 py-4">
                                 <ProductImage
                                     productId={item.product_id}
+                                    productImage={item.product_image}
                                     productName={item.product_name}
                                     className="h-14 w-16 rounded-xl object-cover"
                                 />
@@ -863,6 +969,10 @@ function ProductTable({ products, onEdit, onDelete }) {
                                 {item.reorder_level}
                             </td>
 
+                            <td className="px-4 py-4 font-semibold text-[#17325c]">
+                                {item.warehouse_reorder_level ?? item.reorder_level}
+                            </td>
+
                             <td className="px-4 py-4">
                                 <StatusBadge status={item.status} />
                             </td>
@@ -870,7 +980,13 @@ function ProductTable({ products, onEdit, onDelete }) {
                             <td className="px-4 py-4">
                                 <div className="flex justify-end gap-2">
                                     <ActionButton icon={Pencil} onClick={() => onEdit(item)} />
-                                    <ActionButton icon={Trash2} danger onClick={() => onDelete(item)} />
+                                    <ActionButton
+                                        icon={item.status === "ACTIVE" ? PowerOff : Power}
+                                        danger={item.status === "ACTIVE"}
+                                        success={item.status !== "ACTIVE"}
+                                        label={item.status === "ACTIVE" ? "Deactivate product" : "Activate product"}
+                                        onClick={() => onToggleStatus(item)}
+                                    />
                                 </div>
                             </td>
                         </tr>
@@ -878,7 +994,7 @@ function ProductTable({ products, onEdit, onDelete }) {
 
                     {products.length === 0 && (
                         <tr>
-                            <td colSpan="7" className="px-4 py-10 text-center font-semibold text-[#6f85a3]">
+                            <td colSpan="8" className="px-4 py-10 text-center font-semibold text-[#6f85a3]">
                                 No product records found.
                             </td>
                         </tr>
@@ -939,10 +1055,13 @@ function CategoryTable({ categories, onEdit, onDelete }) {
     );
 }
 
-function ProductImage({ productId, productName, className }) {
-    const [hasError, setHasError] = useState(false);
+function ProductImage({ productId, productImage, productName, className }) {
+    const [hasSourceError, setHasSourceError] = useState(false);
+    const [hasFallbackError, setHasFallbackError] = useState(false);
+    const sourceUrl = getProductImageUrl(productImage, productId);
+    const imageUrl = hasSourceError ? DEFAULT_PRODUCT_IMAGE_URL : sourceUrl;
 
-    if (hasError) {
+    if (hasFallbackError) {
         return (
             <div className={`grid place-items-center bg-white text-[#6f85a3] ${className}`}>
                 <Package size={28} />
@@ -952,10 +1071,17 @@ function ProductImage({ productId, productName, className }) {
 
     return (
         <img
-            src={getProductImageUrl(productId)}
+            src={imageUrl}
             alt={productName}
             className={className}
-            onError={() => setHasError(true)}
+            onError={() => {
+                if (imageUrl === DEFAULT_PRODUCT_IMAGE_URL) {
+                    setHasFallbackError(true);
+                    return;
+                }
+
+                setHasSourceError(true);
+            }}
         />
     );
 }
@@ -972,7 +1098,7 @@ function SupplierAssignmentSection({ suppliers, assignments, onChange }) {
                     Supplier Assignment
                 </h3>
                 <p className="text-sm font-semibold text-[#6f85a3]">
-                    Select supplier(s) for this product and set purchase details.
+                    Optional for now. Select supplier(s) when purchase details are available.
                 </p>
             </div>
 
@@ -1056,7 +1182,7 @@ function SupplierAssignmentSection({ suppliers, assignments, onChange }) {
 
                 {suppliers.length === 0 && (
                     <div className="rounded-2xl bg-[#f8fcff] p-4 text-center text-sm font-semibold text-[#6f85a3]">
-                        No active suppliers available.
+                        No active suppliers available. You can save this product and assign a supplier later.
                     </div>
                 )}
             </div>
@@ -1093,6 +1219,31 @@ function FileInput({ label, selectedImageName, onChange }) {
     );
 }
 
+function SimilarProductsWarning({ products }) {
+    if (products.length === 0) return null;
+
+    return (
+        <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3">
+            <div className="flex items-start gap-3">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-orange-500" />
+                <div className="min-w-0">
+                    <p className="text-sm font-extrabold text-orange-700">
+                        Similar product found. Please check before adding.
+                    </p>
+                    <div className="mt-2 space-y-1">
+                        {products.map((product) => (
+                            <p key={product.product_id} className="text-xs font-semibold text-orange-700">
+                                {product.product_code || `PID-${product.product_id}`} - {product.product_name}
+                                {product.category_name ? ` (${product.category_name})` : ""}
+                            </p>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function SummaryCard({ title, value, icon: Icon, color }) {
     return (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -1122,21 +1273,27 @@ function StatusBadge({ status }) {
     );
 }
 
-function ActionButton({ icon: Icon, onClick, danger = false }) {
+function ActionButton({ icon: Icon, onClick, danger = false, success = false, label }) {
+    const colorClass = danger
+        ? "bg-red-50 text-red-500 hover:bg-red-100"
+        : success
+            ? "bg-green-50 text-green-600 hover:bg-green-100"
+            : "bg-[#eef6fb] text-[#1e4db7] hover:bg-blue-100";
+
     return (
         <button
+            type="button"
             onClick={onClick}
-            className={`grid h-9 w-9 place-items-center rounded-xl ${danger
-                    ? "bg-red-50 text-red-500 hover:bg-red-100"
-                    : "bg-[#eef6fb] text-[#1e4db7] hover:bg-blue-100"
-                }`}
+            aria-label={label}
+            title={label}
+            className={`grid h-9 w-9 place-items-center rounded-xl ${colorClass}`}
         >
             <Icon size={16} />
         </button>
     );
 }
 
-function FormInput({ label, value, onChange, placeholder, type = "text" }) {
+function FormInput({ label, value, onChange, placeholder, type = "text", min, step }) {
     return (
         <div>
             <label className="mb-2 block text-sm font-bold text-[#17325c]">
@@ -1144,6 +1301,8 @@ function FormInput({ label, value, onChange, placeholder, type = "text" }) {
             </label>
             <input
                 type={type}
+                min={min}
+                step={step}
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder}

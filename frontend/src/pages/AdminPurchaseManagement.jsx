@@ -1,5 +1,5 @@
 import DashboardLayout from "../layouts/DashboardLayout";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
     CheckCircle,
@@ -56,6 +56,7 @@ export default function AdminPurchaseManagement() {
     const [purchaseForm, setPurchaseForm] = useState(emptyPurchase);
     const [prefilledPurchaseKey, setPrefilledPurchaseKey] = useState("");
     const [focusedProductId, setFocusedProductId] = useState("");
+    const viewedPurchaseKeyRef = useRef("");
 
     const [toast, setToast] = useState(null);
     const [showNotifications, setShowNotifications] = useState(false);
@@ -211,6 +212,25 @@ export default function AdminPurchaseManagement() {
     const selectedSupplier = useMemo(() => {
         return suppliers.find((supplier) => Number(supplier.supplier_id) === Number(purchaseForm.supplier_id));
     }, [suppliers, purchaseForm.supplier_id]);
+
+    useEffect(() => {
+        const purchaseId = Number(searchParams.get("purchase_id"));
+        if (!purchaseId) return;
+
+        const requestKey = `purchase-${purchaseId}`;
+        if (viewedPurchaseKeyRef.current === requestKey) return;
+
+        viewedPurchaseKeyRef.current = requestKey;
+
+        const openLinkedPurchase = async () => {
+            await Promise.resolve();
+            setShowPurchaseForm(false);
+            setSearchParams({}, { replace: true });
+            openPurchaseDetail(purchaseId);
+        };
+
+        openLinkedPurchase();
+    }, [searchParams, setSearchParams]);
 
     useEffect(() => {
         const productId = Number(searchParams.get("product_id"));
@@ -406,7 +426,7 @@ export default function AdminPurchaseManagement() {
         }
     };
 
-    const openPurchaseDetail = async (purchaseId) => {
+    async function openPurchaseDetail(purchaseId) {
         try {
             const res = await fetch(`${API_BASE}/admin/purchases/${purchaseId}`);
             const data = await res.json();
@@ -422,7 +442,7 @@ export default function AdminPurchaseManagement() {
             console.error(error);
             showToast("Failed to load purchase details.", "error");
         }
-    };
+    }
 
     const markAsOrdered = async (purchaseId) => {
         try {

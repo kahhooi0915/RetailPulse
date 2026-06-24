@@ -34,6 +34,30 @@ const emptySupplierProduct = {
     selectedProducts: [],
 };
 
+const formatSupplierPhone = (value) => {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 11);
+
+    if (digits.length <= 3) return digits;
+    return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+};
+
+const isValidSupplierPhone = (value) => {
+    return !value.trim() || /^\d{3}-\d{6,8}$/.test(value.trim());
+};
+
+const readApiMessage = async (response, fallbackMessage) => {
+    const text = await response.text();
+
+    if (!text) return fallbackMessage;
+
+    try {
+        const data = JSON.parse(text);
+        return data.message || fallbackMessage;
+    } catch {
+        return text;
+    }
+};
+
 export default function AdminSupplierManagement() {
     const navigate = useNavigate();
 
@@ -44,6 +68,7 @@ export default function AdminSupplierManagement() {
 
     const [searchTerm, setSearchTerm] = useState("");
     const [mappingSearchTerm, setMappingSearchTerm] = useState("");
+    const [mappingProductSearchTerm, setMappingProductSearchTerm] = useState("");
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -146,6 +171,18 @@ export default function AdminSupplierManagement() {
         );
     }, [supplierProducts, mappingSearchTerm]);
 
+    const filteredAssignableProducts = useMemo(() => {
+        const keyword = mappingProductSearchTerm.toLowerCase();
+
+        return products
+            .filter((item) => item.status === "ACTIVE")
+            .filter((item) =>
+                !keyword ||
+                item.product_name?.toLowerCase().includes(keyword) ||
+                item.product_code?.toLowerCase().includes(keyword)
+            );
+    }, [products, mappingProductSearchTerm]);
+
     const activeSuppliers = suppliers.filter((item) => item.status === "ACTIVE").length;
     const inactiveSuppliers = suppliers.filter((item) => item.status === "INACTIVE").length;
     const assignedProducts = supplierProducts.filter((item) => item.status === "ACTIVE").length;
@@ -171,6 +208,7 @@ export default function AdminSupplierManagement() {
 
     const openAssignProduct = () => {
         setSupplierProductForm(emptySupplierProduct);
+        setMappingProductSearchTerm("");
         setShowMappingForm(true);
     };
 
@@ -236,6 +274,11 @@ export default function AdminSupplierManagement() {
             return;
         }
 
+        if (!isValidSupplierPhone(supplierForm.phone)) {
+            showToast("Phone number must use Malaysia format, like 012-3456789.", "error");
+            return;
+        }
+
         try {
             setSaving(true);
 
@@ -259,10 +302,9 @@ export default function AdminSupplierManagement() {
                 }),
             });
 
-            const data = await res.json();
-
             if (!res.ok) {
-                showToast(data.message || "Failed to save supplier.", "error");
+                const message = await readApiMessage(res, "Failed to save supplier.");
+                showToast(message, "error");
                 return;
             }
 
@@ -570,7 +612,19 @@ export default function AdminSupplierManagement() {
                         <FormInput label="Contact Person" value={supplierForm.contact_person} onChange={(value) => setSupplierForm({ ...supplierForm, contact_person: value })} placeholder="Example: Mr Tan" />
 
                         <div className="grid grid-cols-2 gap-4">
-                            <FormInput label="Phone" value={supplierForm.phone} onChange={(value) => setSupplierForm({ ...supplierForm, phone: value })} placeholder="0123456789" />
+                            <FormInput
+                                label="Phone"
+                                value={supplierForm.phone}
+                                onChange={(value) =>
+                                    setSupplierForm({
+                                        ...supplierForm,
+                                        phone: formatSupplierPhone(value),
+                                    })
+                                }
+                                placeholder="012-3456789"
+                                inputMode="numeric"
+                                maxLength={12}
+                            />
                             <FormInput label="Email" type="email" value={supplierForm.email} onChange={(value) => setSupplierForm({ ...supplierForm, email: value })} placeholder="sales@supplier.com" />
                         </div>
 
@@ -630,9 +684,18 @@ export default function AdminSupplierManagement() {
                                 </span>
                             </div>
 
+                            <div className="mb-3 flex items-center gap-3 rounded-2xl bg-[#eef6fb] px-4 py-3">
+                                <Search size={18} className="text-[#6f85a3]" />
+                                <input
+                                    value={mappingProductSearchTerm}
+                                    onChange={(e) => setMappingProductSearchTerm(e.target.value)}
+                                    placeholder="Search product name or code..."
+                                    className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-[#8aa0bb]"
+                                />
+                            </div>
+
                             <div className="max-h-[420px] space-y-3 overflow-y-auto rounded-2xl bg-[#eef6fb] p-4">
-                                {products
-                                    .filter((item) => item.status === "ACTIVE")
+                                {filteredAssignableProducts
                                     .map((product) => {
                                         const selectedItem = supplierProductForm.selectedProducts.find(
                                             (item) => Number(item.product_id) === Number(product.product_id)
@@ -762,15 +825,22 @@ export default function AdminSupplierManagement() {
                                         );
                                     })}
 
-                                {products.filter((item) => item.status === "ACTIVE").length === 0 && (
+                                {filteredAssignableProducts.length === 0 && (
                                     <p className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#6f85a3]">
-                                        No active products available.
+                                        No matching active products found.
                                     </p>
                                 )}
                             </div>
                         </div>
 
-                        <FormActions saving={saving} saveText="Save Supplier Products" onCancel={() => setShowMappingForm(false)} />
+                        <FormActions
+                            saving={saving}
+                            saveText="Save Supplier Products"
+                            onCancel={() => {
+                                setShowMappingForm(false);
+                                setMappingProductSearchTerm("");
+                            }}
+                        />
                     </form>
                 </Modal>
             )}
@@ -1097,11 +1167,19 @@ function ReadOnlyField({ label, value }) {
     );
 }
 
-function FormInput({ label, value, onChange, placeholder, type = "text" }) {
+function FormInput({ label, value, onChange, placeholder, type = "text", inputMode, maxLength }) {
     return (
         <div>
             <label className="mb-2 block text-sm font-bold text-[#17325c]">{label}</label>
-            <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]" />
+            <input
+                type={type}
+                inputMode={inputMode}
+                maxLength={maxLength}
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                className="w-full rounded-2xl bg-[#eef6fb] px-4 py-3 font-semibold text-[#17325c] outline-none placeholder:text-[#8aa0bb]"
+            />
         </div>
     );
 }

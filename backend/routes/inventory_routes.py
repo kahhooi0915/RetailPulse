@@ -17,6 +17,18 @@ def ensure_branch_status_column(cur):
     """)
 
 
+def ensure_product_warehouse_reorder_level_column(cur):
+    cur.execute("""
+        ALTER TABLE product
+        ADD COLUMN IF NOT EXISTS warehouse_reorder_level INTEGER
+    """)
+    cur.execute("""
+        UPDATE product
+        SET warehouse_reorder_level = COALESCE(warehouse_reorder_level, reorder_level, 0)
+        WHERE warehouse_reorder_level IS NULL
+    """)
+
+
 def _to_float(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -76,7 +88,11 @@ def admin_get_inventory():
                    i.last_updated,
                    ap.purchase_id,
                    ap.purchase_code,
-                   ap.status
+                   ap.status,
+                   active_transfer.transfer_id,
+                   active_transfer.transfer_code,
+                   active_transfer.status,
+                   active_transfer.quantity
             FROM inventory i
             JOIN product p ON i.product_id = p.product_id
             JOIN branch b ON i.branch_id = b.branch_id
@@ -92,6 +108,19 @@ def admin_get_inventory():
                 ORDER BY po.purchase_id DESC
                 LIMIT 1
             ) ap ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT st.transfer_id,
+                       st.transfer_code,
+                       st.status,
+                       td.quantity
+                FROM stock_transfer st
+                JOIN transfer_detail td ON st.transfer_id = td.transfer_id
+                WHERE st.to_branch_id = i.branch_id
+                  AND td.product_id = i.product_id
+                  AND st.status IN ('PENDING', 'PENDING_SOURCE', 'APPROVED')
+                ORDER BY st.transfer_id DESC
+                LIMIT 1
+            ) active_transfer ON TRUE
             ORDER BY i.branch_id, i.product_id
         """)
 
@@ -111,7 +140,12 @@ def admin_get_inventory():
                 "active_purchase_id": row[8],
                 "active_purchase_code": row[9],
                 "active_purchase_status": row[10],
-                "has_active_purchase": row[8] is not None
+                "has_active_purchase": row[8] is not None,
+                "active_transfer_id": row[11],
+                "active_transfer_code": row[12],
+                "active_transfer_status": row[13],
+                "active_transfer_quantity": row[14],
+                "has_active_transfer": row[11] is not None
             })
 
         cur.close()
@@ -351,12 +385,14 @@ def admin_warehouse_summary():
     try:
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_warehouse_reorder_level_column(cur)
+        conn.commit()
 
         cur.execute("""
             SELECT COALESCE(SUM(i.quantity_in_stock), 0),
                    COUNT(*) FILTER (
                        WHERE i.quantity_in_stock > 0
-                         AND i.quantity_in_stock <= COALESCE(p.reorder_level, 0)
+                         AND i.quantity_in_stock <= COALESCE(p.warehouse_reorder_level, p.reorder_level, 0)
                    ),
                    COUNT(*) FILTER (WHERE i.quantity_in_stock = 0)
             FROM inventory i
@@ -383,7 +419,7 @@ def admin_warehouse_summary():
             JOIN branch b ON i.branch_id = b.branch_id
             JOIN product p ON i.product_id = p.product_id
             WHERE b.branch_type = 'WAREHOUSE'
-              AND i.quantity_in_stock <= COALESCE(p.reorder_level, 0)
+              AND i.quantity_in_stock <= COALESCE(p.warehouse_reorder_level, p.reorder_level, 0)
         """)
         purchase_needed = cur.fetchone()[0]
 
@@ -410,6 +446,8 @@ def admin_warehouse_stock():
     try:
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_warehouse_reorder_level_column(cur)
+        conn.commit()
 
         cur.execute("""
             SELECT i.product_id,
@@ -419,10 +457,10 @@ def admin_warehouse_stock():
                    i.branch_id,
                    b.branch_name,
                    i.quantity_in_stock,
-                   COALESCE(p.reorder_level, 0) AS reorder_level,
+                   COALESCE(p.warehouse_reorder_level, p.reorder_level, 0) AS reorder_level,
                    CASE
                        WHEN i.quantity_in_stock = 0 THEN 'OUT_OF_STOCK'
-                       WHEN i.quantity_in_stock <= COALESCE(p.reorder_level, 0) THEN 'LOW_STOCK'
+                       WHEN i.quantity_in_stock <= COALESCE(p.warehouse_reorder_level, p.reorder_level, 0) THEN 'LOW_STOCK'
                        ELSE 'HEALTHY'
                    END AS status,
                    i.last_updated,
@@ -431,7 +469,10 @@ def admin_warehouse_stock():
                    supplier_choice.contact_person,
                    supplier_choice.phone,
                    supplier_choice.email,
-                   supplier_choice.purchase_price
+                   supplier_choice.purchase_price,
+                   active_purchase.purchase_id,
+                   active_purchase.purchase_code,
+                   active_purchase.status
             FROM inventory i
             JOIN product p ON i.product_id = p.product_id
             LEFT JOIN category c ON p.category_id = c.category_id
@@ -451,6 +492,18 @@ def admin_warehouse_stock():
                 ORDER BY sp.is_preferred DESC, sp.purchase_price ASC, s.supplier_name
                 LIMIT 1
             ) supplier_choice ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT po.purchase_id,
+                       po.purchase_code,
+                       po.status
+                FROM purchase po
+                JOIN purchase_detail pd ON po.purchase_id = pd.purchase_id
+                WHERE po.branch_id = i.branch_id
+                  AND pd.product_id = i.product_id
+                  AND po.status IN ('PENDING', 'ORDERED')
+                ORDER BY po.purchase_id DESC
+                LIMIT 1
+            ) active_purchase ON TRUE
             WHERE b.branch_type = 'WAREHOUSE'
             ORDER BY b.branch_name, p.product_name
         """)
@@ -475,7 +528,11 @@ def admin_warehouse_stock():
                 "supplier_contact_person": row[12],
                 "supplier_phone": row[13],
                 "supplier_email": row[14],
-                "purchase_price": _to_float(row[15]) if row[15] is not None else None
+                "purchase_price": _to_float(row[15]) if row[15] is not None else None,
+                "active_purchase_id": row[16],
+                "active_purchase_code": row[17],
+                "active_purchase_status": row[18],
+                "has_active_purchase": row[16] is not None
             })
 
         _close(conn, cur)
@@ -1122,6 +1179,8 @@ def admin_warehouse_purchase_needed():
     try:
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_warehouse_reorder_level_column(cur)
+        conn.commit()
 
         cur.execute("""
             SELECT i.product_id,
@@ -1131,10 +1190,10 @@ def admin_warehouse_purchase_needed():
                    i.branch_id,
                    b.branch_name AS warehouse_name,
                    i.quantity_in_stock,
-                   COALESCE(p.reorder_level, 0) AS reorder_level,
+                   COALESCE(p.warehouse_reorder_level, p.reorder_level, 0) AS reorder_level,
                    GREATEST(
-                       COALESCE(p.reorder_level, 0) * 2 - i.quantity_in_stock,
-                       COALESCE(p.reorder_level, 0)
+                       COALESCE(p.warehouse_reorder_level, p.reorder_level, 0) * 2 - i.quantity_in_stock,
+                       COALESCE(p.warehouse_reorder_level, p.reorder_level, 0)
                    ) AS suggested_purchase_quantity,
                    supplier_choice.supplier_id,
                    supplier_choice.supplier_name,
@@ -1173,7 +1232,7 @@ def admin_warehouse_purchase_needed():
             WHERE b.branch_type = 'WAREHOUSE'
               AND p.status = 'ACTIVE'
               AND c.status = 'ACTIVE'
-              AND i.quantity_in_stock <= COALESCE(p.reorder_level, 0)
+              AND i.quantity_in_stock <= COALESCE(p.warehouse_reorder_level, p.reorder_level, 0)
             ORDER BY i.quantity_in_stock ASC, p.product_name
         """)
 
@@ -1227,6 +1286,8 @@ def admin_warehouse_create_purchase(product_id):
 
         conn = get_connection()
         cur = conn.cursor()
+        ensure_product_warehouse_reorder_level_column(cur)
+        conn.commit()
 
         admin_user = _get_admin_user(cur, created_by)
         if not _is_active_admin(admin_user):
@@ -1235,7 +1296,7 @@ def admin_warehouse_create_purchase(product_id):
 
         cur.execute("""
             SELECT i.quantity_in_stock,
-                   COALESCE(p.reorder_level, 0),
+                   COALESCE(p.warehouse_reorder_level, p.reorder_level, 0),
                    b.branch_name
             FROM inventory i
             JOIN product p ON i.product_id = p.product_id

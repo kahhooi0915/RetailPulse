@@ -196,10 +196,17 @@ export default function AdminDashboard() {
       const product = products.find(
         (p) => Number(p.product_id) === Number(item.product_id)
       );
-      const reorderLevel = Number(product?.reorder_level || 10);
+      const branch = branches.find(
+        (branchItem) => Number(branchItem.branch_id) === Number(item.branch_id)
+      );
+      const reorderLevel = Number(
+        branch?.branch_type === "WAREHOUSE"
+          ? product?.warehouse_reorder_level || product?.reorder_level || 10
+          : product?.reorder_level || 10
+      );
       return Number(item.quantity_in_stock || 0) <= reorderLevel;
     });
-  }, [inventory, products]);
+  }, [branches, inventory, products]);
 
   const notificationCount = notificationRead ? 0 : lowStockItems.length;
 

@@ -11,11 +11,13 @@ import {
     Plus,
     RotateCcw,
     ShieldCheck,
+    Trash2,
     XCircle,
 } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
 
 const API_BASE = "http://localhost:5000";
+const TEST_RESTORE_DATABASE = "retailpulse_restore";
 
 export default function DatabaseBackupPage() {
     const navigate = useNavigate();
@@ -26,6 +28,7 @@ export default function DatabaseBackupPage() {
     const [creating, setCreating] = useState(false);
     const [verifying, setVerifying] = useState(false);
     const [restoring, setRestoring] = useState(false);
+    const [deletingBackup, setDeletingBackup] = useState("");
     const [selectedBackup, setSelectedBackup] = useState("");
     const [verifiedBackup, setVerifiedBackup] = useState("");
     const [alert, setAlert] = useState(null);
@@ -142,14 +145,17 @@ export default function DatabaseBackupPage() {
         }
     };
 
-    const restoreBackup = async () => {
+    const restoreBackup = async (restoreMode = "current_database") => {
         if (!selectedBackup || verifiedBackup !== selectedBackup) {
             setAlert({ type: "error", message: "Verify the selected backup before restoring." });
             return;
         }
 
+        const isSeparateRestore = restoreMode === "separate_database";
         const confirmed = window.confirm(
-            `Restore database from ${selectedBackup}? Current data will be replaced. A safety backup will be created first.`
+            isSeparateRestore
+                ? `Restore ${selectedBackup} into ${TEST_RESTORE_DATABASE}? Your current database will not be changed.`
+                : `Restore database from ${selectedBackup}? Current data will be replaced. A safety backup will be created first.`
         );
         if (!confirmed) return;
 
@@ -163,6 +169,8 @@ export default function DatabaseBackupPage() {
                     user_id: user.user_id,
                     filename: selectedBackup,
                     confirm: "RESTORE",
+                    restore_mode: restoreMode,
+                    ...(isSeparateRestore ? { target_database: TEST_RESTORE_DATABASE } : {}),
                 }),
             });
             const data = await res.json();
@@ -170,9 +178,15 @@ export default function DatabaseBackupPage() {
                 throw new Error(data.message || "Database restore failed.");
             }
             const duration = data.duration_seconds ? ` Duration: ${data.duration_seconds}s.` : "";
+            const restoreTarget = data.target_database
+                ? ` Target database: ${data.target_database}.`
+                : "";
+            const safetyBackup = data.safety_backup
+                ? ` Safety backup: ${data.safety_backup}.`
+                : "";
             setAlert({
                 type: "success",
-                message: `${data.message}.${duration} Safety backup: ${data.safety_backup}.`,
+                message: `${data.message}.${duration}${restoreTarget}${safetyBackup}`,
             });
             setVerifiedBackup("");
             await loadBackups();
@@ -204,6 +218,40 @@ export default function DatabaseBackupPage() {
             window.URL.revokeObjectURL(url);
         } catch (error) {
             setAlert({ type: "error", message: error.message });
+        }
+    };
+
+    const deleteBackup = async (filename) => {
+        if (backups.length <= 1) {
+            setAlert({ type: "error", message: "Keep at least one backup available." });
+            return;
+        }
+
+        const confirmed = window.confirm(`Delete backup file ${filename}? This cannot be undone.`);
+        if (!confirmed) return;
+
+        try {
+            setDeletingBackup(filename);
+            setAlert(null);
+            const res = await fetch(
+                `${API_BASE}/admin/backups/${encodeURIComponent(filename)}?user_id=${user.user_id}`,
+                { method: "DELETE" }
+            );
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.message || "Delete failed.");
+            }
+
+            if (selectedBackup === filename) {
+                setSelectedBackup("");
+                setVerifiedBackup("");
+            }
+            setAlert({ type: "success", message: `${data.message}: ${filename}` });
+            await loadBackups();
+        } catch (error) {
+            setAlert({ type: "error", message: error.message });
+        } finally {
+            setDeletingBackup("");
         }
     };
 
@@ -257,7 +305,7 @@ export default function DatabaseBackupPage() {
                                             <th className="px-4 py-3">Created Date</th>
                                             <th className="px-4 py-3">File Size</th>
                                             <th className="px-4 py-3">Status</th>
-                                            <th className="px-4 py-3">Download</th>
+                                            <th className="px-4 py-3">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -287,13 +335,27 @@ export default function DatabaseBackupPage() {
                                                     </span>
                                                 </td>
                                                 <td className="px-4 py-4">
-                                                    <button
-                                                        onClick={() => downloadBackup(backup.filename)}
-                                                        className="inline-flex items-center gap-2 rounded-xl bg-[#eef6fb] px-3 py-2 text-sm font-bold text-[#1e4db7] transition hover:bg-[#d9edf8]"
-                                                    >
-                                                        <Download size={16} />
-                                                        Download
-                                                    </button>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        <button
+                                                            onClick={() => downloadBackup(backup.filename)}
+                                                            className="inline-flex items-center gap-2 rounded-xl bg-[#eef6fb] px-3 py-2 text-sm font-bold text-[#1e4db7] transition hover:bg-[#d9edf8]"
+                                                        >
+                                                            <Download size={16} />
+                                                            Download
+                                                        </button>
+                                                        <button
+                                                            onClick={() => deleteBackup(backup.filename)}
+                                                            disabled={backups.length <= 1 || deletingBackup === backup.filename}
+                                                            className="inline-flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                                                        >
+                                                            {deletingBackup === backup.filename ? (
+                                                                <Loader2 size={16} className="animate-spin" />
+                                                            ) : (
+                                                                <Trash2 size={16} />
+                                                            )}
+                                                            Delete
+                                                        </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -391,7 +453,16 @@ export default function DatabaseBackupPage() {
                                 </button>
 
                                 <button
-                                    onClick={restoreBackup}
+                                    onClick={() => restoreBackup("separate_database")}
+                                    disabled={!selectedBackup || verifiedBackup !== selectedBackup || restoring || verifying}
+                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-extrabold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-200"
+                                >
+                                    {restoring ? <Loader2 size={17} className="animate-spin" /> : <DatabaseBackup size={17} />}
+                                    Restore to Test Database
+                                </button>
+
+                                <button
+                                    onClick={() => restoreBackup("current_database")}
                                     disabled={!selectedBackup || verifiedBackup !== selectedBackup || restoring || verifying}
                                     className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-extrabold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-200"
                                 >
@@ -408,7 +479,7 @@ export default function DatabaseBackupPage() {
                             )}
 
                             <p className="mt-4 rounded-xl bg-red-50 px-3 py-3 text-xs font-bold leading-5 text-red-700">
-                                Restore replaces current database data. A pre-restore safety backup is created automatically.
+                                Test restore creates or replaces {TEST_RESTORE_DATABASE}. Live restore replaces current database data and creates a pre-restore safety backup.
                             </p>
                         </section>
                     </aside>

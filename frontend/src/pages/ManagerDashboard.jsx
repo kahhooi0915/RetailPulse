@@ -4,6 +4,8 @@ import {
     BarChart3,
     Bell,
     Boxes,
+    ChartPie,
+    LineChart as LineChartIcon,
     RefreshCcw,
     Settings,
     ShoppingCart,
@@ -12,10 +14,26 @@ import {
     FileSpreadsheet,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import {
+    Bar,
+    BarChart,
+    CartesianGrid,
+    Cell,
+    Legend,
+    Line,
+    LineChart,
+    Pie,
+    PieChart,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from "recharts";
 import ManagerSidebar from "../components/ManagerSidebar";
 import { formatCurrency } from "../utils/formatCurrency";
 
 const API_BASE = "http://localhost:5000";
+const STOCK_CHART_COLORS = ["#0c2f73", "#1e4db7", "#16a34a", "#f59e0b", "#ef4444"];
 
 function getSavedUser() {
     try {
@@ -40,6 +58,7 @@ export default function ManagerDashboard() {
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [stockChartType, setStockChartType] = useState("PIE");
 
     const [settingsData, setSettingsData] = useState({
         darkMode: false,
@@ -148,6 +167,14 @@ export default function ManagerDashboard() {
             .sort((a, b) => Number(b.quantity_in_stock) - Number(a.quantity_in_stock))
             .slice(0, 5);
     }, [managerBranchInventory]);
+
+    const topStockChartData = useMemo(() => {
+        return topProducts.map((item) => ({
+            name: item.product_name,
+            code: item.product_code,
+            stock: Number(item.quantity_in_stock || 0),
+        }));
+    }, [topProducts]);
 
     const topSellingProducts = useMemo(() => {
         const totals = managerBranchSaleDetails.reduce((map, detail) => {
@@ -447,35 +474,107 @@ export default function ManagerDashboard() {
 
                     <section className="mb-6 grid grid-cols-2 gap-6">
                         <div className="rounded-2xl bg-white p-6 shadow-sm">
-                            <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                                Top Stock Products
-                            </h2>
+                            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                                <h2 className="text-xl font-extrabold text-[#07102f]">
+                                    Top Stock Products
+                                </h2>
 
-                            <div className="space-y-3">
-                                {topProducts.map((item) => (
-                                    <div
-                                        key={`${item.product_id}-${item.branch_id}`}
-                                        className="flex items-center justify-between rounded-2xl bg-[#f8fcff] p-4"
-                                    >
-                                        <div>
-                                            <p className="font-extrabold text-[#17325c]">
-                                                {item.product_name}
-                                            </p>
-                                            <p className="text-xs font-bold text-[#6f85a3]">
-                                                {item.product_code}
-                                            </p>
-                                        </div>
+                                <div className="inline-flex rounded-xl border border-blue-100 bg-[#f8fcff] p-1">
+                                    <ChartTypeButton
+                                        active={stockChartType === "PIE"}
+                                        icon={ChartPie}
+                                        label="Pie chart"
+                                        onClick={() => setStockChartType("PIE")}
+                                    />
+                                    <ChartTypeButton
+                                        active={stockChartType === "BAR"}
+                                        icon={BarChart3}
+                                        label="Bar chart"
+                                        onClick={() => setStockChartType("BAR")}
+                                    />
+                                    <ChartTypeButton
+                                        active={stockChartType === "LINE"}
+                                        icon={LineChartIcon}
+                                        label="Line chart"
+                                        onClick={() => setStockChartType("LINE")}
+                                    />
+                                </div>
+                            </div>
 
-                                        <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-[#1e4db7]">
-                                            {item.quantity_in_stock}
-                                        </span>
-                                    </div>
-                                ))}
-
-                                {topProducts.length === 0 && (
-                                    <div className="rounded-xl bg-[#f4fbff] p-5 text-sm font-semibold text-[#6f85a3]">
+                            <div className="h-[360px]">
+                                {topStockChartData.length === 0 ? (
+                                    <div className="grid h-full place-items-center rounded-xl bg-[#f4fbff] p-5 text-sm font-semibold text-[#6f85a3]">
                                         No inventory data found.
                                     </div>
+                                ) : (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        {stockChartType === "PIE" ? (
+                                            <PieChart>
+                                                <Pie
+                                                    data={topStockChartData}
+                                                    dataKey="stock"
+                                                    nameKey="name"
+                                                    cx="50%"
+                                                    cy="45%"
+                                                    outerRadius={96}
+                                                    label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                                                >
+                                                    {topStockChartData.map((entry, index) => (
+                                                        <Cell
+                                                            key={entry.code || entry.name}
+                                                            fill={STOCK_CHART_COLORS[index % STOCK_CHART_COLORS.length]}
+                                                        />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip formatter={(value) => [`${value} units`, "Stock"]} />
+                                                <Legend />
+                                            </PieChart>
+                                        ) : stockChartType === "BAR" ? (
+                                            <BarChart data={topStockChartData} margin={{ top: 10, right: 10, left: -10, bottom: 30 }}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                <XAxis
+                                                    dataKey="name"
+                                                    interval={0}
+                                                    tick={{ fontSize: 11 }}
+                                                    angle={-18}
+                                                    textAnchor="end"
+                                                    height={70}
+                                                />
+                                                <YAxis allowDecimals={false} />
+                                                <Tooltip formatter={(value) => [`${value} units`, "Stock"]} />
+                                                <Bar dataKey="stock" radius={[8, 8, 0, 0]}>
+                                                    {topStockChartData.map((entry, index) => (
+                                                        <Cell
+                                                            key={entry.code || entry.name}
+                                                            fill={STOCK_CHART_COLORS[index % STOCK_CHART_COLORS.length]}
+                                                        />
+                                                    ))}
+                                                </Bar>
+                                            </BarChart>
+                                        ) : (
+                                            <LineChart data={topStockChartData} margin={{ top: 10, right: 18, left: -10, bottom: 30 }}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                <XAxis
+                                                    dataKey="name"
+                                                    interval={0}
+                                                    tick={{ fontSize: 11 }}
+                                                    angle={-18}
+                                                    textAnchor="end"
+                                                    height={70}
+                                                />
+                                                <YAxis allowDecimals={false} />
+                                                <Tooltip formatter={(value) => [`${value} units`, "Stock"]} />
+                                                <Line
+                                                    type="monotone"
+                                                    dataKey="stock"
+                                                    stroke="#0c2f73"
+                                                    strokeWidth={3}
+                                                    dot={{ r: 5, fill: "#1e4db7" }}
+                                                    activeDot={{ r: 7 }}
+                                                />
+                                            </LineChart>
+                                        )}
+                                    </ResponsiveContainer>
                                 )}
                             </div>
                         </div>
@@ -805,6 +904,25 @@ function SummaryCard({ title, value, icon: Icon, color }) {
 
             <h2 className={`mt-4 text-3xl font-extrabold ${color}`}>{value}</h2>
         </div>
+    );
+}
+
+function ChartTypeButton({ active, icon: Icon, label, onClick }) {
+    return (
+        <button
+            type="button"
+            title={label}
+            aria-label={label}
+            aria-pressed={active}
+            onClick={onClick}
+            className={`grid h-10 w-10 place-items-center rounded-lg transition ${
+                active
+                    ? "bg-[#0c2f73] text-white shadow-sm"
+                    : "text-[#6f85a3] hover:bg-white hover:text-[#1e4db7]"
+            }`}
+        >
+            <Icon size={18} />
+        </button>
     );
 }
 

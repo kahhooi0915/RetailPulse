@@ -18,6 +18,7 @@ const API = "http://localhost:5000";
 const DEFAULT_REORDER_LEVEL = 10;
 const SAFETY_STOCK_MULTIPLIER = 1.2;
 const ROWS_PER_PAGE = 5;
+const ACTIVE_TRANSFER_STATUSES = ["PENDING", "PENDING_SOURCE", "APPROVED"];
 
 export default function InventoryOverview() {
     const user = JSON.parse(sessionStorage.getItem("user")) || {};
@@ -125,11 +126,13 @@ export default function InventoryOverview() {
         return inventory.map((item) => {
             const product = productMap[Number(item.product_id)];
             const quantity = Number(item.quantity_in_stock || 0);
-            const reorderLevel = Number(
-                product?.reorder_level ?? item.reorder_level ?? DEFAULT_REORDER_LEVEL
-            );
             const branchType =
                 branchTypeMap[Number(item.branch_id)] || item.branch_type || "BRANCH";
+            const reorderLevel = Number(
+                branchType === "WAREHOUSE"
+                    ? product?.warehouse_reorder_level ?? product?.reorder_level ?? item.reorder_level ?? DEFAULT_REORDER_LEVEL
+                    : product?.reorder_level ?? item.reorder_level ?? DEFAULT_REORDER_LEVEL
+            );
 
             let status = "HEALTHY";
             if (quantity === 0) status = "OUT_OF_STOCK";
@@ -159,13 +162,25 @@ export default function InventoryOverview() {
                 names.add(branch.branch_name);
             }
         });
-        return ["ALL", "WAREHOUSE", ...names];
+        return ["ALL", ...names];
     }, [stockRows, branches]);
+
+    const activeBranchCount = useMemo(() => {
+        const branchIds = new Set();
+        branches.forEach((branch) => {
+            if (branch.branch_type !== "WAREHOUSE") {
+                branchIds.add(Number(branch.branch_id));
+            }
+        });
+        return Math.max(1, branchIds.size);
+    }, [branches]);
 
     const filteredStockRows = useMemo(() => {
         const keyword = search.trim().toLowerCase();
 
         return stockRows.filter((item) => {
+            if (item.branch_type === "WAREHOUSE") return false;
+
             const matchesSearch =
                 !keyword ||
                 item.product_code?.toLowerCase().includes(keyword) ||
@@ -174,7 +189,6 @@ export default function InventoryOverview() {
                 item.branch_name?.toLowerCase().includes(keyword);
             const matchesBranch =
                 branchFilter === "ALL" ||
-                (branchFilter === "WAREHOUSE" && item.branch_type === "WAREHOUSE") ||
                 item.branch_name === branchFilter;
             const matchesStatus =
                 stockFilter === "ALL" || item.stock_status === stockFilter;
@@ -188,20 +202,40 @@ export default function InventoryOverview() {
 
         stockRows.forEach((item) => {
             const productId = Number(item.product_id);
+            const product = productMap[productId];
             if (!map[productId]) {
                 map[productId] = {
                     product_id: productId,
                     product_code: item.product_code,
                     product_name: item.product_name,
                     category_name: item.category_name,
-                    reorder_level: item.reorder_level,
+                    reorder_level: Number(
+                        product?.reorder_level ?? item.reorder_level ?? DEFAULT_REORDER_LEVEL
+                    ),
+                    warehouse_reorder_level: Number(
+                        product?.warehouse_reorder_level ??
+                            product?.reorder_level ??
+                            item.reorder_level ??
+                            DEFAULT_REORDER_LEVEL
+                    ),
                     totalStock: 0,
+                    branchStock: 0,
+                    warehouseStock: 0,
+                    branchLocationCount: 0,
                     locations: [],
                 };
             }
 
             const quantity = Number(item.quantity_in_stock || 0);
             map[productId].totalStock += quantity;
+
+            if (item.branch_type === "WAREHOUSE") {
+                map[productId].warehouseStock += quantity;
+            } else {
+                map[productId].branchStock += quantity;
+                map[productId].branchLocationCount += 1;
+            }
+
             map[productId].locations.push({
                 branch_name: item.branch_name || "Unknown Location",
                 branch_type: item.branch_type,
@@ -210,18 +244,23 @@ export default function InventoryOverview() {
         });
 
         return map;
-    }, [stockRows]);
+    }, [stockRows, productMap]);
 
     const aiRecommendations = useMemo(() => {
         return Object.values(productDistribution)
             .map((product) => {
                 const forecast = forecastMap[Number(product.product_id)];
                 const forecastDemand = Number(forecast?.forecast_quantity || 0);
+                const branchCount = Math.max(
+                    1,
+                    Number(product.branchLocationCount || activeBranchCount)
+                );
+                const branchForecastDemand = forecastDemand > 0 ? forecastDemand / branchCount : 0;
                 const recentSales = getRecentMonthlySales(forecast?.monthly_sales);
                 const recentSalesStats = getRecentSalesStats(recentSales);
                 const recommendedReorderLevel =
                     forecastDemand > 0
-                        ? Math.ceil(forecastDemand * SAFETY_STOCK_MULTIPLIER)
+                        ? Math.ceil(branchForecastDemand * SAFETY_STOCK_MULTIPLIER)
                         : Number(product.reorder_level || DEFAULT_REORDER_LEVEL);
                 const recommendation = getReorderRecommendation(
                     product.reorder_level,
@@ -231,6 +270,8 @@ export default function InventoryOverview() {
                 return {
                     ...product,
                     forecastDemand,
+                    branchForecastDemand,
+                    branchCount,
                     recentSales,
                     recentSalesStats,
                     recommendedReorderLevel,
@@ -241,13 +282,15 @@ export default function InventoryOverview() {
                         currentLevel: product.reorder_level,
                         recommendedLevel: recommendedReorderLevel,
                         forecastDemand,
+                        branchForecastDemand,
+                        branchCount,
                         recommendation,
                         recentSalesStats,
                     }),
                 };
             })
             .sort((a, b) => a.product_name?.localeCompare(b.product_name || "") || 0);
-    }, [productDistribution, forecastMap]);
+    }, [productDistribution, forecastMap, activeBranchCount]);
 
     const paginatedStockRows = paginate(filteredStockRows, stockPage);
     const paginatedStockTransferRecords = paginate(stockTransferRecords, transferPage);
@@ -267,6 +310,14 @@ export default function InventoryOverview() {
     };
 
     const openArrangeTransfer = (item) => {
+        if (hasOpenTransferRequest(item)) {
+            showToast(
+                `Stock transfer ${item.active_transfer_code || `#${item.active_transfer_id}`} already exists for this product and branch.`,
+                "error"
+            );
+            return;
+        }
+
         const suggestedQuantity = Math.max(
             Number(item.reorder_level || 0) - Number(item.quantity_in_stock || 0),
             1
@@ -301,6 +352,15 @@ export default function InventoryOverview() {
 
     const submitArrangeTransfer = async () => {
         if (!arrangeTransferItem) return;
+
+        if (hasOpenTransferRequest(arrangeTransferItem)) {
+            showToast(
+                `Stock transfer ${arrangeTransferItem.active_transfer_code || `#${arrangeTransferItem.active_transfer_id}`} already exists for this product and branch.`,
+                "error"
+            );
+            setArrangeTransferItem(null);
+            return;
+        }
 
         if (!arrangeTransferForm.source_branch_id) {
             showToast("Select a source location.", "error");
@@ -390,7 +450,7 @@ export default function InventoryOverview() {
 
     const applyRecommendedReorderLevel = async (item) => {
         const productId = Number(item.product_id);
-        const recommendedLevel = Number(item.recommendedReorderLevel);
+        const recommendedLevel = Math.max(0, Math.floor(Number(item.recommendedReorderLevel)));
 
         if (!productId || !Number.isFinite(recommendedLevel)) {
             showToast("Unable to apply this reorder recommendation.", "error");
@@ -498,8 +558,8 @@ export default function InventoryOverview() {
 
                 <SectionCard
                     icon={<Boxes size={21} />}
-                    title="Product Quantity Overview"
-                    desc="Where is the stock currently located?"
+                    title="Branch Stock Overview"
+                    desc="Stock quantities across branch locations."
                     badge={`${filteredStockRows.length} records`}
                     badgeTone="blue"
                 >
@@ -521,7 +581,7 @@ export default function InventoryOverview() {
                                 {loading ? (
                                     <EmptyRow colSpan={8} text="Loading inventory quantities..." />
                                 ) : paginatedStockRows.length === 0 ? (
-                                    <EmptyRow colSpan={8} text="No inventory quantity records found." />
+                                    <EmptyRow colSpan={8} text="No branch stock records found." />
                                 ) : (
                                     paginatedStockRows.map((item) => (
                                         <tr
@@ -550,7 +610,17 @@ export default function InventoryOverview() {
                                                 <StockStatusBadge status={item.stock_status} />
                                             </td>
                                             <td className="border-b border-blue-50 pl-5 text-right">
-                                                {item.branch_type !== "WAREHOUSE" && item.stock_status !== "HEALTHY" && (
+                                                {item.branch_type !== "WAREHOUSE" && item.stock_status !== "HEALTHY" && hasOpenTransferRequest(item) && (
+                                                    <button
+                                                        disabled
+                                                        className="mr-2 inline-flex h-9 items-center gap-2 rounded-xl bg-amber-50 px-3 text-xs font-extrabold text-amber-700"
+                                                        title={`Existing transfer ${item.active_transfer_code || `#${item.active_transfer_id}`} is ${formatStatus(item.active_transfer_status)}`}
+                                                    >
+                                                        <ClipboardList size={15} />
+                                                        Requested
+                                                    </button>
+                                                )}
+                                                {item.branch_type !== "WAREHOUSE" && item.stock_status !== "HEALTHY" && !hasOpenTransferRequest(item) && (
                                                     <button
                                                         onClick={() => openArrangeTransfer(item)}
                                                         className="mr-2 inline-flex h-9 items-center gap-2 rounded-xl bg-[#0c2f73] px-3 text-xs font-extrabold text-white hover:bg-[#103986]"
@@ -665,8 +735,8 @@ export default function InventoryOverview() {
 
                 <SectionCard
                     icon={<TrendingUp size={21} />}
-                    title="AI Reorder Level Recommendation"
-                    desc="What reorder level should be maintained based on future demand?"
+                    title="AI Branch Reorder Level Recommendation"
+                    desc="What branch reorder level should be maintained based on future demand?"
                     badge={`${aiRecommendations.length} products`}
                     badgeTone="green"
                 >
@@ -676,8 +746,8 @@ export default function InventoryOverview() {
                                 <tr className="border-b text-[#6f85a3]">
                                     <th className="border-b py-3 pr-5 text-xs font-extrabold uppercase">Product Code</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Product Name</th>
-                                    <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Current Reorder Level</th>
-                                    <th className="border-b px-5 text-right text-xs font-extrabold uppercase">AI Recommended Reorder Level</th>
+                                    <th className="border-b px-5 text-right text-xs font-extrabold uppercase">Current Branch Reorder</th>
+                                    <th className="border-b px-5 text-right text-xs font-extrabold uppercase">AI Recommended Branch Reorder</th>
                                     <th className="border-b px-5 text-xs font-extrabold uppercase">Recommendation</th>
                                     <th className="border-b pl-5 text-right text-xs font-extrabold uppercase">Info</th>
                                 </tr>
@@ -709,7 +779,7 @@ export default function InventoryOverview() {
                                                 <RecommendationStatusBadge
                                                     recommendation={item.recommendation}
                                                     canApply={
-                                                        Number(item.recommendedReorderLevel) >
+                                                        Number(item.recommendedReorderLevel) !==
                                                         Number(item.reorder_level)
                                                     }
                                                     disabled={
@@ -972,6 +1042,11 @@ function RecommendationStatusBadge({ recommendation, canApply = false, disabled 
         "Decrease Reorder Level": "bg-orange-50 text-orange-700",
         "Keep Current Level": "bg-blue-50 text-[#1e4db7]",
     };
+    const hoverStyles = {
+        "Increase Reorder Level": "hover:bg-green-100",
+        "Decrease Reorder Level": "hover:bg-orange-100",
+        "Keep Current Level": "hover:bg-blue-100",
+    };
 
     if (canApply) {
         return (
@@ -979,9 +1054,9 @@ function RecommendationStatusBadge({ recommendation, canApply = false, disabled 
                 type="button"
                 onClick={onApply}
                 disabled={disabled}
-                className={`inline-flex rounded-full px-3 py-1 text-xs font-extrabold transition hover:bg-green-100 disabled:cursor-wait disabled:opacity-60 ${
+                className={`inline-flex rounded-full px-3 py-1 text-xs font-extrabold transition disabled:cursor-wait disabled:opacity-60 ${
                     styles[recommendation] || "bg-gray-50 text-gray-600"
-                }`}
+                } ${hoverStyles[recommendation] || "hover:bg-gray-100"}`}
                 title="Update current reorder level to the AI recommended level"
             >
                 {disabled ? "Updating..." : recommendation}
@@ -1197,7 +1272,7 @@ function RecommendationModal({ item, onClose }) {
             <div className="custom-scrollbar max-h-[90vh] w-full max-w-[720px] overflow-y-auto rounded-3xl bg-white shadow-2xl">
                 <ModalHeader
                     icon={<TrendingUp size={25} />}
-                    title="AI Reorder Level Recommendation"
+                    title="AI Branch Reorder Level Recommendation"
                     subtitle={item.product_name}
                     onClose={onClose}
                 />
@@ -1206,11 +1281,17 @@ function RecommendationModal({ item, onClose }) {
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <InfoRow label="Product" value={item.product_name || "-"} />
                         <InfoRow label="Product Code" value={item.product_code || "-"} />
-                        <InfoRow label="Current Reorder Level" value={`${item.reorder_level} units`} />
-                        <InfoRow label="AI Recommended Reorder Level" value={`${item.recommendedReorderLevel} units`} />
+                        <InfoRow label="Current Branch Reorder" value={`${item.reorder_level} units`} />
+                        <InfoRow label="Warehouse Reorder" value={`${item.warehouse_reorder_level} units`} />
+                        <InfoRow label="AI Recommended Branch Reorder" value={`${item.recommendedReorderLevel} units`} />
+                        <InfoRow label="Branch Count Used" value={`${item.branchCount} branches`} />
                         <InfoRow
-                            label="Forecasted Monthly Demand"
+                            label="Forecasted Total Monthly Demand"
                             value={item.forecastDemand > 0 ? `${item.forecastDemand} units` : "-"}
+                        />
+                        <InfoRow
+                            label="Estimated Demand Per Branch"
+                            value={item.branchForecastDemand > 0 ? `${formatCompactNumber(item.branchForecastDemand)} units` : "-"}
                         />
                         <InfoRow label="Recommendation" value={item.recommendation} />
                     </div>
@@ -1478,6 +1559,12 @@ function paginate(items, page) {
     return items.slice(start, start + ROWS_PER_PAGE);
 }
 
+function hasOpenTransferRequest(item) {
+    if (!item) return false;
+    if (item.has_active_transfer) return true;
+    return ACTIVE_TRANSFER_STATUSES.includes(item.active_transfer_status);
+}
+
 function getReorderRecommendation(current, recommended) {
     if (Number(recommended) > Number(current)) return "Increase Reorder Level";
     if (Number(recommended) < Number(current)) return "Decrease Reorder Level";
@@ -1513,33 +1600,41 @@ function buildReorderReason({
     currentLevel,
     recommendedLevel,
     forecastDemand,
+    branchForecastDemand,
+    branchCount,
     recommendation,
     recentSalesStats,
 }) {
     const current = Number(currentLevel || 0);
     const recommended = Number(recommendedLevel || 0);
     const demand = Number(forecastDemand || 0);
+    const perBranchDemand = Number(branchForecastDemand || 0);
+    const branches = Math.max(1, Number(branchCount || 1));
     const monthCount = Number(recentSalesStats?.monthCount || 0);
     const total = Number(recentSalesStats?.total || 0);
     const average = Number(recentSalesStats?.average || 0);
+    const demandSummary =
+        demand > 0
+            ? ` Forecasted total monthly demand is ${demand} units across ${branches} branch${branches === 1 ? "" : "es"}, so estimated demand per branch is ${formatCompactNumber(perBranchDemand)} units.`
+            : " Forecast demand is not currently available, so the existing branch reorder level is used.";
     const salesSummary =
         monthCount > 0
             ? ` Recent sales show ${total} units sold across the last ${monthCount} recorded month${monthCount === 1 ? "" : "s"}, averaging ${formatCompactNumber(average)} units per month.`
             : " Recent monthly sales history is not available for this product.";
 
     if (recommendation === "Decrease Reorder Level") {
-        return `Decrease is recommended because the forecasted monthly demand is ${demand} units, which is lower than the current reorder level of ${current} units. The suggested level of ${recommended} units keeps a small safety buffer while reducing excess inventory risk.${salesSummary}`;
+        return `Decrease is recommended because the estimated branch demand is lower than the current branch reorder level of ${current} units. The suggested branch level of ${recommended} units keeps a safety buffer while reducing excess inventory risk.${demandSummary}${salesSummary}`;
     }
 
     if (recommendation === "Increase Reorder Level") {
-        return `Increase is recommended because the forecasted monthly demand is ${demand} units, which is higher than the current reorder level of ${current} units. The suggested level of ${recommended} units adds safety stock for expected demand.${salesSummary}`;
+        return `Increase is recommended because the estimated branch demand is higher than the current branch reorder level of ${current} units. The suggested branch level of ${recommended} units adds safety stock for expected demand.${demandSummary}${salesSummary}`;
     }
 
     if (demand > 0) {
-        return `The current reorder level is aligned with the forecasted monthly demand of ${demand} units, so no change is recommended.${salesSummary}`;
+        return `The current branch reorder level is aligned with estimated branch demand, so no change is recommended.${demandSummary}${salesSummary}`;
     }
 
-    return `No forecast demand is currently available, so the current reorder level is maintained.${salesSummary}`;
+    return `No forecast demand is currently available, so the current branch reorder level is maintained.${salesSummary}`;
 }
 
 function formatCompactNumber(value) {

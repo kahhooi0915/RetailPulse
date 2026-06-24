@@ -34,6 +34,7 @@ const DEFAULT_PRODUCT_IMAGE_URL = `${API_BASE}/static/images/products/default.we
 const HOLD_ORDERS_STORAGE_KEY = "holdOrders";
 const HOLD_ORDER_EXPIRY_MS = 3 * 60 * 60 * 1000;
 const SHOW_LEGACY_SALES_HISTORY_MODAL = false;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const getStoredHoldOrders = () => {
   try {
@@ -112,6 +113,7 @@ export default function Staff() {
   const [completedSale, setCompletedSale] = useState(null);
   const [showEmailPopup, setShowEmailPopup] = useState(false);
   const [customerEmail, setCustomerEmail] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(false);
   const [sidebarHovered, setSidebarHovered] = useState(false); // hover-expand sidebar
   const sidebarOpen = sidebarPinned || sidebarHovered;
@@ -248,6 +250,79 @@ export default function Staff() {
   const handleProductImageError = (event) => {
     if (event.currentTarget.src !== DEFAULT_PRODUCT_IMAGE_URL) {
       event.currentTarget.src = DEFAULT_PRODUCT_IMAGE_URL;
+    }
+  };
+
+  const showToastMessage = (message) => {
+    setToast({
+      show: true,
+      message,
+    });
+
+    setTimeout(() => {
+      setToast({ show: false, message: "" });
+    }, 2500);
+  };
+
+  const sendReceiptEmail = async () => {
+    const email = customerEmail.trim();
+
+    if (!email) {
+      alert("Please enter email.");
+      return;
+    }
+
+    if (!EMAIL_PATTERN.test(email)) {
+      alert("Please enter a valid email address.");
+      return;
+    }
+
+    if (!completedSale) {
+      alert("Receipt details are not available.");
+      return;
+    }
+
+    try {
+      setEmailSending(true);
+
+      const res = await fetch(`${API_BASE}/staff/email-receipt`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          receipt: {
+            sale_code: completedSale.sale_code,
+            branch_name: completedSale.branch_name || user?.branch_name || "Branch",
+            cashier_name: completedSale.cashier_name || user?.name || "Staff",
+            terminal_name: terminalName,
+            payment_method: completedSale.payment_method,
+            cart: completedSale.cart,
+            subtotal: completedSale.subtotal,
+            discount_amount: completedSale.discountAmount,
+            tax: completedSale.tax,
+            total: completedSale.total,
+            receipt_footer: receiptFooter,
+          },
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.message || "Unable to send receipt email.");
+        return;
+      }
+
+      setShowEmailPopup(false);
+      setCustomerEmail("");
+      showToastMessage(data.message || `Receipt sent to ${email}`);
+    } catch (error) {
+      console.error(error);
+      alert("Unable to send receipt email. Check backend connection.");
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -543,13 +618,17 @@ export default function Staff() {
       }
 
       const receiptItems = Array.isArray(data.details) ? data.details : [];
-      const receiptSubtotal = receiptItems.reduce(
+      const detailSubtotal = receiptItems.reduce(
         (sum, item) => sum + Number(item.subtotal || 0),
         0
       );
+      const receiptSubtotal = detailSubtotal;
       const receiptTotal = Number(sale.total_amount || receiptSubtotal);
-      const receiptDiscount = Math.max(receiptSubtotal - receiptTotal, 0);
-      const receiptTax = Math.max(receiptTotal - receiptSubtotal, 0);
+      const receiptDiscount = Number(
+        sale.discount_amount ?? Math.max(receiptSubtotal - receiptTotal, 0)
+      );
+      const receiptDiscountPercent = Number(sale.discount_percent ?? 0);
+      const receiptTax = Math.max(receiptTotal - receiptSubtotal + receiptDiscount, 0);
 
       setCompletedSale({
         sale_id: sale.sale_id,
@@ -566,7 +645,7 @@ export default function Staff() {
           subtotal: Number(item.subtotal || 0),
         })),
         subtotal: receiptSubtotal,
-        discountPercent: 0,
+        discountPercent: receiptDiscountPercent,
         discountAmount: receiptDiscount,
         tax: receiptTax,
         taxRate: null,
@@ -603,6 +682,8 @@ export default function Staff() {
           user_id: user.user_id,
           branch_id: user.branch_id,
           total_amount: total,
+          discount_percent: discountPercent,
+          discount_amount: discountAmount,
           payment_method: paymentMethod,
         }),
       });
@@ -645,6 +726,8 @@ export default function Staff() {
           user_id: user.user_id,
           branch_id: user.branch_id,
           total_amount: total,
+          discount_percent: discountPercent,
+          discount_amount: discountAmount,
           payment_method: paymentMethod,
         }),
       });
@@ -1294,29 +1377,11 @@ export default function Staff() {
           />
 
           <button
-            onClick={() => {
-              if (!customerEmail) {
-                alert("Please enter email.");
-                return;
-              }
-
-              setShowEmailPopup(false);
-
-              // show success toast instead of alert
-              setToast({
-                show: true,
-                message: `Receipt sent to ${customerEmail}`,
-              });
-
-              setTimeout(() => {
-                setToast({ show: false, message: "" });
-              }, 2500);
-
-              setCustomerEmail("");
-            }}
-            className="w-full rounded-full bg-[#0c2f73] py-4 font-extrabold text-white"
+            onClick={sendReceiptEmail}
+            disabled={emailSending}
+            className="w-full rounded-full bg-[#0c2f73] py-4 font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Send Email
+            {emailSending ? "Sending..." : "Send Email"}
           </button>
         </div>
       </div>

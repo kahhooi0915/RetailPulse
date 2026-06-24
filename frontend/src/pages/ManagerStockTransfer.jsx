@@ -679,22 +679,6 @@ export default function ManagerStockTransfer() {
                     </section>
 
                     <TransferSection
-                        title="My Transfer Requests"
-                        desc="Track requests created by your branch, including pending, approved, rejected, and completed transfers."
-                        badge={`${myTransferRequests.length} request(s)`}
-                        empty="No transfer requests created by your branch."
-                    >
-                        <MyTransferTable
-                            transfers={myTransferRequests}
-                            transferItems={transferItems}
-                            getBranchName={getBranchName}
-                            onView={setViewTarget}
-                            onReceive={setReceiveTarget}
-                            actionLoading={actionLoading}
-                        />
-                    </TransferSection>
-
-                    <TransferSection
                         title="Staff Requests To Review"
                         desc="Requests submitted for your branch that must be reviewed before the source branch sees them."
                         badge={`${managerReviewRequests.length} request(s)`}
@@ -729,6 +713,22 @@ export default function ManagerStockTransfer() {
                                 }
                             />
                         ))}
+                    </TransferSection>
+
+                    <TransferSection
+                        title="My Transfer Requests"
+                        desc="Track requests created by your branch, including pending, approved, rejected, and completed transfers."
+                        badge={`${myTransferRequests.length} request(s)`}
+                        empty="No transfer requests created by your branch."
+                    >
+                        <MyTransferTable
+                            transfers={myTransferRequests}
+                            transferItems={transferItems}
+                            getBranchName={getBranchName}
+                            onView={setViewTarget}
+                            onReceive={setReceiveTarget}
+                            actionLoading={actionLoading}
+                        />
                     </TransferSection>
 
                     <TransferSection

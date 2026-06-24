@@ -1,8 +1,123 @@
+from email.message import EmailMessage
+import os
+import re
+import smtplib
+
 from flask import Blueprint, request, jsonify
 from db import get_connection
 from audit import log_audit
 
 sales_bp = Blueprint("sales_bp", __name__)
+EMAIL_PATTERN = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+
+
+def ensure_sale_discount_columns(cur):
+    cur.execute("""
+        ALTER TABLE sale
+        ADD COLUMN IF NOT EXISTS discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0
+    """)
+
+
+def _to_float(value):
+    return float(value or 0)
+
+
+def _format_money(value):
+    return f"RM {float(value or 0):,.2f}"
+
+
+def _build_receipt_email(receipt):
+    sale_code = receipt.get("sale_code") or "Receipt"
+    branch_name = receipt.get("branch_name") or "RetailPulse"
+    cashier_name = receipt.get("cashier_name") or "Staff"
+    payment_method = receipt.get("payment_method") or "N/A"
+    terminal_name = receipt.get("terminal_name") or "POS"
+    receipt_footer = receipt.get("receipt_footer") or "Thank you for shopping with us!"
+    items = receipt.get("cart") if isinstance(receipt.get("cart"), list) else []
+
+    lines = [
+        "RetailPulse Receipt",
+        f"Sale ID: #{sale_code}",
+        f"Branch: {branch_name}",
+        f"Cashier: {cashier_name}",
+        f"Terminal: {terminal_name}",
+        f"Payment Method: {payment_method}",
+        "",
+        "Items",
+    ]
+
+    for item in items:
+        name = item.get("product_name") or "Item"
+        quantity = int(float(item.get("quantity") or 0))
+        unit_price = float(item.get("selling_price") or item.get("unit_price") or 0)
+        line_total = item.get("subtotal")
+
+        if line_total is None:
+            line_total = quantity * unit_price
+
+        lines.append(
+            f"- {name} x{quantity} @ {_format_money(unit_price)} = {_format_money(line_total)}"
+        )
+
+    lines.extend([
+        "",
+        f"Subtotal: {_format_money(receipt.get('subtotal'))}",
+        f"Discount: - {_format_money(receipt.get('discount_amount'))}",
+        f"Tax: {_format_money(receipt.get('tax'))}",
+        f"Grand Total: {_format_money(receipt.get('total'))}",
+        "",
+        receipt_footer,
+    ])
+
+    return "\n".join(lines)
+
+
+def send_receipt_email(recipient_email, receipt):
+    mail_username = os.getenv("MAIL_USERNAME")
+    mail_password = os.getenv("MAIL_PASSWORD")
+
+    if not mail_username or not mail_password:
+        raise RuntimeError("MAIL_USERNAME and MAIL_PASSWORD must be set")
+
+    sale_code = receipt.get("sale_code") or "Receipt"
+    message = EmailMessage()
+    message["Subject"] = f"RetailPulse Receipt #{sale_code}"
+    message["From"] = mail_username
+    message["To"] = recipient_email
+    message.set_content(_build_receipt_email(receipt))
+
+    with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+        smtp.starttls()
+        smtp.login(mail_username, mail_password)
+        smtp.send_message(message)
+
+
+@sales_bp.route("/staff/email-receipt", methods=["POST"])
+def staff_email_receipt():
+    try:
+        data = request.get_json() or {}
+        recipient_email = (data.get("email") or "").strip()
+        receipt = data.get("receipt") or {}
+
+        if not recipient_email:
+            return jsonify({"message": "Customer email is required"}), 400
+
+        if not re.match(EMAIL_PATTERN, recipient_email):
+            return jsonify({"message": "Customer email format is invalid"}), 400
+
+        if not receipt.get("sale_code") or not receipt.get("cart"):
+            return jsonify({"message": "Receipt details are required"}), 400
+
+        send_receipt_email(recipient_email, receipt)
+
+        return jsonify({"message": f"Receipt sent to {recipient_email}"}), 200
+
+    except smtplib.SMTPRecipientsRefused:
+        return jsonify({"message": "The email address was rejected by the mail server"}), 400
+    except Exception as e:
+        print("ERROR /staff/email-receipt:", e)
+        return jsonify({"message": "Unable to send receipt email. Please try again."}), 500
 
 
 # =========================
@@ -13,11 +128,14 @@ def admin_get_sales():
     try:
         conn = get_connection()
         cur = conn.cursor()
+        ensure_sale_discount_columns(cur)
+        conn.commit()
 
         cur.execute("""
             SELECT s.sale_id, s.sale_code, s.user_id, u.name,
                    s.branch_id, b.branch_name, b.branch_code, b.branch_type,
-                   s.sale_date, s.total_amount, s.payment_method
+                   s.sale_date, s.total_amount, s.payment_method,
+                   s.discount_percent, s.discount_amount
             FROM sale s
             JOIN users u ON s.user_id = u.user_id
             JOIN branch b ON s.branch_id = b.branch_id
@@ -40,7 +158,9 @@ def admin_get_sales():
                 "branch_type": row[7],
                 "sale_date": row[8].isoformat() if row[8] else None,
                 "total_amount": float(row[9]),
-                "payment_method": row[10]
+                "payment_method": row[10],
+                "discount_percent": _to_float(row[11]),
+                "discount_amount": _to_float(row[12])
             })
 
         cur.close()
@@ -61,11 +181,14 @@ def admin_get_single_sale(sale_id):
     try:
         conn = get_connection()
         cur = conn.cursor()
+        ensure_sale_discount_columns(cur)
+        conn.commit()
 
         cur.execute("""
             SELECT s.sale_id, s.sale_code, s.user_id, u.name,
                    s.branch_id, b.branch_name,
-                   s.sale_date, s.total_amount, s.payment_method
+                   s.sale_date, s.total_amount, s.payment_method,
+                   s.discount_percent, s.discount_amount
             FROM sale s
             JOIN users u ON s.user_id = u.user_id
             JOIN branch b ON s.branch_id = b.branch_id
@@ -89,7 +212,9 @@ def admin_get_single_sale(sale_id):
             "branch_name": row[5],
             "sale_date": row[6].isoformat() if row[6] else None,
             "total_amount": float(row[7]),
-            "payment_method": row[8]
+            "payment_method": row[8],
+            "discount_percent": _to_float(row[9]),
+            "discount_amount": _to_float(row[10])
         }
 
         return jsonify(sale), 200
@@ -114,6 +239,9 @@ def admin_add_sale():
         branch_id = data.get("branch_id")
         payment_method = data.get("payment_method")
         sale_date = data.get("sale_date")
+        discount_percent = float(data.get("discount_percent") or 0)
+        discount_amount = float(data.get("discount_amount") or 0)
+        total_amount = float(data.get("total_amount") or 0)
 
         allowed_payment_methods = ["CASH", "CARD", "E_WALLET"]
 
@@ -126,8 +254,12 @@ def admin_add_sale():
         if payment_method not in allowed_payment_methods:
             return jsonify({"message": "Invalid payment method"}), 400
 
+        if min(discount_percent, discount_amount, total_amount) < 0:
+            return jsonify({"message": "Sale amounts cannot be negative"}), 400
+
         conn = get_connection()
         cur = conn.cursor()
+        ensure_sale_discount_columns(cur)
 
         cur.execute("""
             SELECT user_id, role, branch_id
@@ -153,16 +285,28 @@ def admin_add_sale():
 
         if sale_date:
             cur.execute("""
-                INSERT INTO sale (user_id, branch_id, sale_date, total_amount, payment_method)
-                VALUES (%s, %s, %s, 0, %s)
+                INSERT INTO sale (
+                    user_id, branch_id, sale_date, total_amount, payment_method,
+                    discount_percent, discount_amount
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING sale_id, sale_code
-            """, (user_id, branch_id, sale_date, payment_method))
+            """, (
+                user_id, branch_id, sale_date, total_amount, payment_method,
+                discount_percent, discount_amount
+            ))
         else:
             cur.execute("""
-                INSERT INTO sale (user_id, branch_id, sale_date, total_amount, payment_method)
-                VALUES (%s, %s, CURRENT_TIMESTAMP, 0, %s)
+                INSERT INTO sale (
+                    user_id, branch_id, sale_date, total_amount, payment_method,
+                    discount_percent, discount_amount
+                )
+                VALUES (%s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
                 RETURNING sale_id, sale_code
-            """, (user_id, branch_id, payment_method))
+            """, (
+                user_id, branch_id, total_amount, payment_method,
+                discount_percent, discount_amount
+            ))
 
         new_sale = cur.fetchone()
         conn.commit()
@@ -171,14 +315,16 @@ def admin_add_sale():
             "CREATE_SALE",
             "POS",
             new_sale[0],
-            f"Created Sale {new_sale[1]} with total amount RM 0.00."
+            f"Created Sale {new_sale[1]} with total amount RM {total_amount:.2f}."
         )
 
         return jsonify({
             "message": "Sale created successfully",
             "sale_id": new_sale[0],
             "sale_code": new_sale[1],
-            "total_amount": 0
+            "total_amount": total_amount,
+            "discount_percent": discount_percent,
+            "discount_amount": discount_amount
         }), 201
 
     except Exception as e:
@@ -206,6 +352,8 @@ def admin_update_sale(sale_id):
         total_amount = data.get("total_amount")
         payment_method = data.get("payment_method")
         sale_date = data.get("sale_date")
+        discount_percent = float(data.get("discount_percent") or 0)
+        discount_amount = float(data.get("discount_amount") or 0)
 
         allowed_payment_methods = ["CASH", "CARD", "E_WALLET"]
 
@@ -224,8 +372,12 @@ def admin_update_sale(sale_id):
         if float(total_amount) < 0:
             return jsonify({"message": "Total amount cannot be negative"}), 400
 
+        if min(discount_percent, discount_amount) < 0:
+            return jsonify({"message": "Sale amounts cannot be negative"}), 400
+
         conn = get_connection()
         cur = conn.cursor()
+        ensure_sale_discount_columns(cur)
 
         cur.execute("SELECT 1 FROM sale WHERE sale_id = %s", (sale_id,))
         if not cur.fetchone():
@@ -268,7 +420,9 @@ def admin_update_sale(sale_id):
                     branch_id = %s,
                     sale_date = %s,
                     total_amount = %s,
-                    payment_method = %s
+                    payment_method = %s,
+                    discount_percent = %s,
+                    discount_amount = %s
                 WHERE sale_id = %s
             """, (
                 user_id,
@@ -276,6 +430,8 @@ def admin_update_sale(sale_id):
                 sale_date,
                 total_amount,
                 payment_method,
+                discount_percent,
+                discount_amount,
                 sale_id
             ))
         else:
@@ -284,13 +440,17 @@ def admin_update_sale(sale_id):
                 SET user_id = %s,
                     branch_id = %s,
                     total_amount = %s,
-                    payment_method = %s
+                    payment_method = %s,
+                    discount_percent = %s,
+                    discount_amount = %s
                 WHERE sale_id = %s
             """, (
                 user_id,
                 branch_id,
                 total_amount,
                 payment_method,
+                discount_percent,
+                discount_amount,
                 sale_id
             ))
 
@@ -544,6 +704,7 @@ def admin_add_sale_detail():
 
         conn = get_connection()
         cur = conn.cursor()
+        ensure_sale_discount_columns(cur)
 
         # 1. Check sale exists and get branch_id
         cur.execute("""
