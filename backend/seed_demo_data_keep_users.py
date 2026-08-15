@@ -323,13 +323,13 @@ def seed_products(cur, category_ids):
         ("Body Wash", "Personal Care", "Fresh daily body wash for family use.", "bodywash.jpg", 16.90, 12, 60),
         ("Deodorant 50ML", "Personal Care", "Compact roll-on deodorant for daily freshness.", "deodorant.jpg", 8.90, 10, 50),
         ("Coca Cola 250ML", "Beverages", "Chilled carbonated soft drink can.", "cocacola.jpg", 2.50, 24, 120),
-        ("Marker Pen", "Stationery", "Black permanent marker pen for office and school.", "default.webp", 3.20, 15, 75),
-        ("Tea Bags", "Beverages", "Classic black tea bags, 25 sachets per box.", "default.webp", 9.90, 10, 50),
-        ("Dishwashing Liquid", "Household", "Lemon dishwashing liquid for kitchen cleaning.", "default.webp", 7.50, 8, 40),
+        ("Marker Pen", "Stationery", "Black permanent marker pen for office and school.", "markerpen.jpg", 3.20, 15, 75),
+        ("Tea Bags", "Beverages", "Classic black tea bags, 25 sachets per box.", "teabags.jpg", 9.90, 10, 50),
+        ("Toothpaste", "Personal Care", "Daily fluoride toothpaste for family dental care.", "toothpaste.jpg", 7.50, 8, 40),
         ("Shampoo", "Personal Care", "Gentle shampoo for daily hair care.", "shampoo.jpg", 14.90, 10, 50),
-        ("Notebook A5", "Stationery", "A5 ruled notebook for study and office notes.", "default.webp", 4.80, 20, 100),
-        ("Potato Chips", "Snacks", "Crispy salted potato chips snack pack.", "default.webp", 5.90, 18, 90),
-        ("Tissue Roll", "Household", "Soft household tissue roll pack.", "default.webp", 6.90, 16, 80),
+        ("Notebook A5", "Stationery", "A5 ruled notebook for study and office notes.", "notebooka5.jpg", 4.80, 20, 100),
+        ("Pepsi 500ML", "Beverages", "Refreshing cola drink bottle for chilled display.", "pepsi.jpg", 3.20, 18, 90),
+        ("Sunscreen", "Personal Care", "Lightweight daily sunscreen for outdoor protection.", "sunscreen.jpg", 19.90, 16, 80),
     ]
 
     ids = {}
@@ -416,15 +416,14 @@ def seed_supplier_products(cur, supplier_ids, product_ids):
         "Melaka Retail Supplier Sdn Bhd": [
             ("Body Wash", 10.50, 4, True),
             ("Deodorant 50ML", 5.20, 5, True),
-            ("Dishwashing Liquid", 4.60, 3, True),
+            ("Toothpaste", 4.60, 3, True),
             ("Shampoo", 9.20, 4, True),
-            ("Tissue Roll", 4.10, 3, False),
+            ("Sunscreen", 12.10, 3, False),
         ],
         "FreshMart Distribution": [
             ("Coca Cola 250ML", 1.55, 2, True),
             ("Tea Bags", 6.40, 5, True),
-            ("Potato Chips", 3.60, 2, True),
-            ("Tissue Roll", 4.00, 4, True),
+            ("Pepsi 500ML", 2.10, 2, True),
         ],
         "OfficePro Wholesale": [
             ("Marker Pen", 1.75, 3, True),
@@ -467,15 +466,15 @@ def seed_sales(cur, product_ids, branch_ids, branch_users):
         "Coca Cola 250ML",
         "Deodorant 50ML",
     ]
-    slow_moving_products = ["Dishwashing Liquid", "Potato Chips", "Tissue Roll"]
+    slow_moving_products = ["Toothpaste", "Pepsi 500ML", "Sunscreen"]
     other_products = [
         name
         for name in product_ids
         if name not in important_products and name not in slow_moving_products
     ]
-    start_date = datetime.now() - timedelta(days=180)
+    start_date = datetime.now() - timedelta(days=365)
 
-    for month_offset in range(6):
+    for month_offset in range(12):
         month_start = start_date + timedelta(days=month_offset * 30)
         for branch_name, profile in branch_profiles.items():
             branch_id = branch_ids[branch_name]
@@ -544,9 +543,9 @@ def seed_sales(cur, product_ids, branch_ids, branch_users):
                 )
 
     rare_sales = [
-        ("Dishwashing Liquid", "Ayer Keroh Branch", 2, 155),
-        ("Potato Chips", "Bukit Katil Branch", 1, 95),
-        ("Tissue Roll", "Melaka Sentral Branch", 2, 35),
+        ("Toothpaste", "Ayer Keroh Branch", 2, 155),
+        ("Pepsi 500ML", "Bukit Katil Branch", 1, 95),
+        ("Sunscreen", "Melaka Sentral Branch", 2, 35),
     ]
 
     for product_name, branch_name, quantity, days_ago in rare_sales:
@@ -589,7 +588,7 @@ def seed_purchases(cur, supplier_ids, product_ids, branch_ids, created_by):
             "PENDING",
             "Melaka Retail Supplier Sdn Bhd",
             datetime.now() - timedelta(days=2),
-            [("Shampoo", 30, 9.20), ("Tissue Roll", 48, 4.10)],
+            [("Shampoo", 30, 9.20), ("Sunscreen", 48, 12.10)],
         ),
         (
             "PENDING",
@@ -613,7 +612,7 @@ def seed_purchases(cur, supplier_ids, product_ids, branch_ids, created_by):
             "RECEIVED",
             "FreshMart Distribution",
             datetime.now() - timedelta(days=18),
-            [("Coca Cola 250ML", 120, 1.55), ("Tea Bags", 40, 6.40), ("Potato Chips", 75, 3.60)],
+            [("Coca Cola 250ML", 120, 1.55), ("Tea Bags", 40, 6.40), ("Pepsi 500ML", 75, 2.10)],
         ),
         (
             "RECEIVED",
@@ -625,7 +624,7 @@ def seed_purchases(cur, supplier_ids, product_ids, branch_ids, created_by):
             "CANCELLED",
             "FreshMart Distribution",
             datetime.now() - timedelta(days=45),
-            [("Potato Chips", 50, 3.60)],
+            [("Pepsi 500ML", 50, 2.10)],
         ),
     ]
 
@@ -693,7 +692,7 @@ def seed_transfers(cur, product_ids, branch_ids, requested_by, approved_by, rece
             "PENDING",
             "Warehouse",
             "Bukit Katil Branch",
-            [("Deodorant 50ML", 10), ("Potato Chips", 12)],
+            [("Deodorant 50ML", 10), ("Pepsi 500ML", 12)],
             None,
         ),
         (
@@ -785,14 +784,14 @@ def seed_inventory(cur, product_ids, branch_ids):
         "Warehouse": {
             "Body Wash": 92,
             "Deodorant 50ML": 35,
-            "Coca Cola 250ML": 42,
+            "Coca Cola 250ML": 75,
             "Marker Pen": 112,
             "Tea Bags": 32,
-            "Dishwashing Liquid": 55,
-            "Shampoo": 28,
+            "Toothpaste": 25,
+            "Shampoo": 32,
             "Notebook A5": 150,
-            "Potato Chips": 120,
-            "Tissue Roll": 45,
+            "Pepsi 500ML": 45,
+            "Sunscreen": 50,
         },
         "Melaka Sentral Branch": {
             "Body Wash": 38,
@@ -800,11 +799,11 @@ def seed_inventory(cur, product_ids, branch_ids):
             "Coca Cola 250ML": 58,
             "Marker Pen": 34,
             "Tea Bags": 6,
-            "Dishwashing Liquid": 18,
+            "Toothpaste": 18,
             "Shampoo": 7,
             "Notebook A5": 44,
-            "Potato Chips": 36,
-            "Tissue Roll": 9,
+            "Pepsi 500ML": 36,
+            "Sunscreen": 9,
         },
         "Ayer Keroh Branch": {
             "Body Wash": 7,
@@ -812,11 +811,11 @@ def seed_inventory(cur, product_ids, branch_ids):
             "Coca Cola 250ML": 42,
             "Marker Pen": 8,
             "Tea Bags": 5,
-            "Dishwashing Liquid": 14,
+            "Toothpaste": 14,
             "Shampoo": 18,
             "Notebook A5": 28,
-            "Potato Chips": 22,
-            "Tissue Roll": 13,
+            "Pepsi 500ML": 22,
+            "Sunscreen": 13,
         },
         "Bukit Katil Branch": {
             "Body Wash": 22,
@@ -824,11 +823,11 @@ def seed_inventory(cur, product_ids, branch_ids):
             "Coca Cola 250ML": 19,
             "Marker Pen": 6,
             "Tea Bags": 16,
-            "Dishwashing Liquid": 3,
+            "Toothpaste": 3,
             "Shampoo": 4,
             "Notebook A5": 24,
-            "Potato Chips": 7,
-            "Tissue Roll": 30,
+            "Pepsi 500ML": 7,
+            "Sunscreen": 30,
         },
     }
 
