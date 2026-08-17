@@ -1,13 +1,22 @@
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from db import get_connection
+from routes.auth_routes import login_required, role_required
 
 dashboard_bp = Blueprint("dashboard_bp", __name__)
 
 
 def _to_float(value):
     return float(value or 0)
+
+
+def _is_admin():
+    return g.current_user["role"] == "SYSTEM_ADMIN"
+
+
+def _current_branch_id():
+    return g.current_user.get("branch_id")
 
 
 def _dashboard_period_filter():
@@ -27,18 +36,35 @@ def _dashboard_period_filter():
 
 
 @dashboard_bp.route("/admin/dashboard/summary", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_dashboard_summary():
     try:
         period, sale_date_filter, sale_date_params = _dashboard_period_filter()
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
+        transfer_params = []
+        transfer_branch_filter = ""
+        sale_branch_filter = ""
+        inventory_branch_filter = ""
+        if not _is_admin():
+            transfer_branch_filter = "AND (from_branch_id = %s OR to_branch_id = %s)"
+            sale_branch_filter = "AND s.branch_id = %s"
+            inventory_branch_filter = "WHERE i.branch_id = %s"
+            transfer_params.extend([_current_branch_id(), _current_branch_id()])
+
+        cur.execute(f"""
             SELECT COUNT(*)
             FROM stock_transfer
             WHERE status IN ('PENDING', 'PENDING_SOURCE')
-        """)
+              {transfer_branch_filter}
+        """, transfer_params)
         pending_transfers = cur.fetchone()[0]
+
+        sale_params = [*sale_date_params]
+        if not _is_admin():
+            sale_params.append(_current_branch_id())
 
         cur.execute(f"""
             SELECT COALESCE(SUM(s.total_amount), 0)
@@ -46,7 +72,8 @@ def admin_dashboard_summary():
             JOIN branch b ON s.branch_id = b.branch_id
             WHERE b.branch_type = 'BRANCH'
               {sale_date_filter}
-        """, sale_date_params)
+              {sale_branch_filter}
+        """, sale_params)
         total_sales = cur.fetchone()[0]
 
         # Cost basis logic:
@@ -91,10 +118,15 @@ def admin_dashboard_summary():
             ) supplier_cost ON TRUE
             WHERE b.branch_type = 'BRANCH'
               {sale_date_filter}
-        """, sale_date_params)
+              {sale_branch_filter}
+        """, sale_params)
         gross_profit = cur.fetchone()[0]
 
-        cur.execute("""
+        inventory_params = []
+        if not _is_admin():
+            inventory_params.append(_current_branch_id())
+
+        cur.execute(f"""
             SELECT COALESCE(
                 SUM(
                     i.quantity_in_stock
@@ -126,7 +158,8 @@ def admin_dashboard_summary():
                          sp.supplier_id ASC
                 LIMIT 1
             ) supplier_cost ON TRUE
-        """)
+            {inventory_branch_filter}
+        """, inventory_params)
         inventory_value = cur.fetchone()[0]
 
         cur.close()

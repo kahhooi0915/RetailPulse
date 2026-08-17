@@ -1,12 +1,17 @@
 import re
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from db import get_connection
-from audit import get_actor_user_id, log_audit
+from audit import log_audit
+from routes.auth_routes import login_required, role_required
 
 purchase_bp = Blueprint("purchase_bp", __name__)
 
 ACTIVE_PURCHASE_STATUSES = ("PENDING", "ORDERED")
+
+
+def _current_user_id():
+    return g.current_user["user_id"]
 
 
 def normalize_bool(value):
@@ -156,6 +161,8 @@ def ensure_inventory_audit_function(cur):
 # =========================================================
 
 @purchase_bp.route("/admin/suppliers", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER")
 def get_suppliers():
     try:
         conn = get_connection()
@@ -200,10 +207,12 @@ def get_suppliers():
 
 
 @purchase_bp.route("/admin/suppliers", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def create_supplier():
     try:
         data = request.get_json()
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
 
         supplier_name = data.get("supplier_name")
         contact_person = data.get("contact_person")
@@ -267,10 +276,12 @@ def create_supplier():
 
 
 @purchase_bp.route("/admin/suppliers/<int:supplier_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def update_supplier(supplier_id):
     try:
         data = request.get_json()
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
 
         supplier_name = data.get("supplier_name")
         contact_person = data.get("contact_person")
@@ -330,10 +341,11 @@ def update_supplier(supplier_id):
 
 
 @purchase_bp.route("/admin/suppliers/<int:supplier_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def delete_supplier(supplier_id):
     try:
-        data = request.get_json(silent=True) or {}
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
         conn = get_connection()
         cur = conn.cursor()
 
@@ -375,6 +387,8 @@ def delete_supplier(supplier_id):
 # =========================================================
 
 @purchase_bp.route("/admin/supplier-products", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER")
 def get_supplier_products():
     try:
         supplier_id = request.args.get("supplier_id")
@@ -451,6 +465,8 @@ def get_supplier_products():
 
 
 @purchase_bp.route("/admin/supplier-products", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def create_supplier_product():
     try:
         data = request.get_json()
@@ -523,6 +539,8 @@ def create_supplier_product():
 # =========================================================
 
 @purchase_bp.route("/admin/purchases", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_purchases():
     try:
         conn = get_connection()
@@ -570,6 +588,8 @@ def get_purchases():
 
 
 @purchase_bp.route("/admin/purchases/products-not-purchased", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_products_not_purchased():
     try:
         conn = get_connection()
@@ -645,6 +665,8 @@ def get_products_not_purchased():
 
 
 @purchase_bp.route("/admin/purchases", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def create_purchase():
     conn = None
     cur = None
@@ -655,7 +677,7 @@ def create_purchase():
         supplier_id = data.get("supplier_id")
         receiving_branch_id = data.get("receiving_branch_id") or data.get("branch_id")
         items = data.get("items")
-        created_by = data.get("created_by")
+        created_by = _current_user_id()
 
         if supplier_id is None:
             return jsonify({"message": "Supplier is required"}), 400
@@ -667,9 +689,6 @@ def create_purchase():
                 "quantity": data.get("quantity"),
                 "purchase_price": data.get("purchase_price")
             }]
-
-        if created_by is None:
-            return jsonify({"message": "Created by user is required"}), 400
 
         if not isinstance(items, list) or len(items) == 0:
             return jsonify({"message": "At least one product item is required"}), 400
@@ -846,6 +865,8 @@ def create_purchase():
 
 
 @purchase_bp.route("/admin/purchases/<int:purchase_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_purchase_details(purchase_id):
     try:
         conn = get_connection()
@@ -942,6 +963,8 @@ def get_purchase_details(purchase_id):
 # =========================================================
 
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/details", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def add_purchase_detail(purchase_id):
     try:
         data = request.get_json()
@@ -1076,6 +1099,8 @@ def add_purchase_detail(purchase_id):
 
 
 @purchase_bp.route("/admin/purchase-details/<int:purchase_detail_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def delete_purchase_detail(purchase_detail_id):
     try:
         conn = get_connection()
@@ -1125,10 +1150,11 @@ def delete_purchase_detail(purchase_detail_id):
 # =========================================================
 
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/ordered", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def mark_purchase_ordered(purchase_id):
     try:
-        data = request.get_json(silent=True) or {}
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
         conn = get_connection()
         cur = conn.cursor()
 
@@ -1169,10 +1195,11 @@ def mark_purchase_ordered(purchase_id):
 
 
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/cancel", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def cancel_purchase_order(purchase_id):
     try:
-        data = request.get_json(silent=True) or {}
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
         conn = get_connection()
         cur = conn.cursor()
 
@@ -1213,13 +1240,14 @@ def cancel_purchase_order(purchase_id):
 
 
 @purchase_bp.route("/admin/purchases/<int:purchase_id>/receive", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def mark_purchase_received(purchase_id):
     conn = None
     cur = None
 
     try:
-        data = request.get_json(silent=True) or {}
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
         conn = get_connection()
         cur = conn.cursor()
 
@@ -1244,7 +1272,7 @@ def mark_purchase_received(purchase_id):
             return jsonify({"message": "Only ORDERED purchases can be received"}), 400
 
         branch_id = purchase[1]
-        audit_user_id = actor_user_id or purchase[4]
+        audit_user_id = actor_user_id
 
         if not audit_user_id:
             conn.rollback()
@@ -1335,13 +1363,15 @@ def mark_purchase_received(purchase_id):
 # INVENTORY OVERVIEW - CREATE PURCHASE RECOMMENDATION
 # =========================================================
 @purchase_bp.route("/admin/purchase-recommendations", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def create_purchase_recommendation():
     try:
         data = request.get_json()
 
         product_id = data.get("product_id")
         branch_id = data.get("branch_id")
-        created_by = data.get("created_by")
+        created_by = _current_user_id()
         quantity = data.get("quantity")
 
         if product_id is None:
@@ -1349,9 +1379,6 @@ def create_purchase_recommendation():
 
         if branch_id is None:
             return jsonify({"message": "Branch is required"}), 400
-
-        if created_by is None:
-            return jsonify({"message": "Created by user is required"}), 400
 
         if quantity is None or int(quantity) <= 0:
             return jsonify({"message": "Valid quantity is required"}), 400
@@ -1473,6 +1500,8 @@ def create_purchase_recommendation():
 # SUPPLIER PRODUCT - UPDATE
 # =========================================================
 @purchase_bp.route("/admin/supplier-products/<int:supplier_id>/<int:product_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def update_supplier_product(supplier_id, product_id):
     try:
         data = request.get_json()
@@ -1539,6 +1568,8 @@ def update_supplier_product(supplier_id, product_id):
 # SUPPLIER PRODUCT - DELETE / DEACTIVATE
 # =========================================================
 @purchase_bp.route("/admin/supplier-products/<int:supplier_id>/<int:product_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def delete_supplier_product(supplier_id, product_id):
     try:
         conn = get_connection()
@@ -1569,6 +1600,8 @@ def delete_supplier_product(supplier_id, product_id):
 # SUPPLIER PRODUCT - BULK CREATE
 # =========================================================
 @purchase_bp.route("/admin/supplier-products/bulk", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def create_supplier_products_bulk():
     try:
         data = request.get_json()

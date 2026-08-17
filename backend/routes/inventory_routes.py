@@ -1,8 +1,9 @@
 from decimal import Decimal
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from db import get_connection
-from audit import get_actor_user_id, log_audit
+from audit import log_audit
+from routes.auth_routes import login_required, role_required
 
 inventory_bp = Blueprint("inventory_bp", __name__)
 
@@ -42,42 +43,41 @@ def _close(conn=None, cur=None):
         conn.close()
 
 
-def _get_admin_user(cur, user_id):
-    if not user_id:
-        return None
-
-    cur.execute("""
-        SELECT user_id, role, status
-        FROM users
-        WHERE user_id = %s
-    """, (user_id,))
-
-    row = cur.fetchone()
-    if not row:
-        return None
-
-    return {
-        "user_id": row[0],
-        "role": row[1],
-        "status": row[2],
-    }
+def _current_user_id():
+    return g.current_user["user_id"]
 
 
-def _is_active_admin(user):
-    return user and user["role"] == "SYSTEM_ADMIN" and user["status"] == "ACTIVE"
+def _current_role():
+    return g.current_user["role"]
+
+
+def _current_branch_id():
+    return g.current_user.get("branch_id")
+
+
+def _can_access_branch(branch_id):
+    return _current_role() == "SYSTEM_ADMIN" or int(branch_id) == int(_current_branch_id())
 
 
 # =========================
 # ADMIN - GET ALL INVENTORY
 # =========================
 @inventory_bp.route("/admin/inventory", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_inventory():
     try:
         conn = get_connection()
         cur = conn.cursor()
         ensure_branch_status_column(cur)
 
-        cur.execute("""
+        params = []
+        branch_filter = ""
+        if _current_role() != "SYSTEM_ADMIN":
+            branch_filter = "WHERE i.branch_id = %s"
+            params.append(_current_branch_id())
+
+        cur.execute(f"""
             SELECT i.product_id,
                    p.product_code,
                    p.product_name,
@@ -121,8 +121,9 @@ def admin_get_inventory():
                 ORDER BY st.transfer_id DESC
                 LIMIT 1
             ) active_transfer ON TRUE
+            {branch_filter}
             ORDER BY i.branch_id, i.product_id
-        """)
+        """, params)
 
         rows = cur.fetchall()
 
@@ -162,8 +163,13 @@ def admin_get_inventory():
 # ADMIN - GET SINGLE INVENTORY
 # =========================
 @inventory_bp.route("/admin/inventory/<int:product_id>/<int:branch_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_single_inventory(product_id, branch_id):
     try:
+        if not _can_access_branch(branch_id):
+            return jsonify({"message": "Forbidden"}), 403
+
         conn = get_connection()
         cur = conn.cursor()
 
@@ -210,6 +216,8 @@ def admin_get_single_inventory(product_id, branch_id):
 # ADMIN - ADD INVENTORY
 # =========================
 @inventory_bp.route("/admin/inventory", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_add_inventory():
     try:
         data = request.get_json()
@@ -282,10 +290,15 @@ def admin_add_inventory():
 # ADMIN - UPDATE INVENTORY
 # =========================
 @inventory_bp.route("/admin/inventory/<int:product_id>/<int:branch_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER")
 def admin_update_inventory(product_id, branch_id):
     try:
         data = request.get_json()
-        actor_user_id = get_actor_user_id(data)
+        actor_user_id = _current_user_id()
+
+        if not _can_access_branch(branch_id):
+            return jsonify({"message": "Forbidden"}), 403
 
         quantity_in_stock = data.get("quantity_in_stock")
 
@@ -345,6 +358,8 @@ def admin_update_inventory(product_id, branch_id):
 # ADMIN - DELETE INVENTORY
 # =========================
 @inventory_bp.route("/admin/inventory/<int:product_id>/<int:branch_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_delete_inventory(product_id, branch_id):
     try:
         conn = get_connection()
@@ -381,6 +396,8 @@ def admin_delete_inventory(product_id, branch_id):
 # ADMIN WAREHOUSE - SUMMARY
 # =========================
 @inventory_bp.route("/admin/warehouse/summary", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_summary():
     try:
         conn = get_connection()
@@ -442,6 +459,8 @@ def admin_warehouse_summary():
 # ADMIN WAREHOUSE - STOCK
 # =========================
 @inventory_bp.route("/admin/warehouse/stock", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_stock():
     try:
         conn = get_connection()
@@ -545,6 +564,8 @@ def admin_warehouse_stock():
 
 
 @inventory_bp.route("/admin/warehouse/distribute", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_distribute_stock():
     conn = None
     cur = None
@@ -555,10 +576,7 @@ def admin_warehouse_distribute_stock():
         to_branch_id = data.get("to_branch_id")
         product_id = data.get("product_id")
         quantity = data.get("quantity")
-        approved_by = data.get("approved_by") or data.get("user_id")
-
-        if not approved_by:
-            return jsonify({"message": "Admin user is required"}), 400
+        approved_by = _current_user_id()
 
         if not from_branch_id or not to_branch_id or not product_id:
             return jsonify({"message": "Warehouse, destination branch, and product are required"}), 400
@@ -582,11 +600,6 @@ def admin_warehouse_distribute_stock():
 
         conn = get_connection()
         cur = conn.cursor()
-
-        admin_user = _get_admin_user(cur, approved_by)
-        if not _is_active_admin(admin_user):
-            conn.rollback()
-            return jsonify({"message": "Only an active system admin can distribute warehouse stock"}), 403
 
         cur.execute("""
             SELECT branch_id, branch_name, branch_type
@@ -773,6 +786,8 @@ def admin_warehouse_distribute_stock():
 # ADMIN WAREHOUSE - TRANSFERS
 # =========================
 @inventory_bp.route("/admin/warehouse/transfers", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_transfers():
     try:
         conn = get_connection()
@@ -832,6 +847,8 @@ def admin_warehouse_transfers():
 
 
 @inventory_bp.route("/admin/warehouse/transfer-approvals", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_transfer_approvals():
     try:
         conn = get_connection()
@@ -889,6 +906,8 @@ def admin_warehouse_transfer_approvals():
 
 
 @inventory_bp.route("/admin/warehouse/transfers/<int:transfer_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_transfer_details(transfer_id):
     try:
         conn = get_connection()
@@ -987,24 +1006,18 @@ def admin_warehouse_transfer_details(transfer_id):
 
 
 @inventory_bp.route("/admin/warehouse/transfers/<int:transfer_id>/approve", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_approve_transfer(transfer_id):
     conn = None
     cur = None
 
     try:
         data = request.get_json() or {}
-        approved_by = data.get("approved_by")
-
-        if not approved_by:
-            return jsonify({"message": "Approver is required"}), 400
+        approved_by = _current_user_id()
 
         conn = get_connection()
         cur = conn.cursor()
-
-        admin_user = _get_admin_user(cur, approved_by)
-        if not _is_active_admin(admin_user):
-            conn.rollback()
-            return jsonify({"message": "Only an active system admin can approve warehouse transfers"}), 403
 
         cur.execute("""
             SELECT st.from_branch_id, st.to_branch_id
@@ -1109,28 +1122,22 @@ def admin_warehouse_approve_transfer(transfer_id):
 
 
 @inventory_bp.route("/admin/warehouse/transfers/<int:transfer_id>/reject", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_reject_transfer(transfer_id):
     conn = None
     cur = None
 
     try:
         data = request.get_json() or {}
-        approved_by = data.get("approved_by")
+        approved_by = _current_user_id()
         reject_reason = (data.get("reject_reason") or "").strip()
-
-        if not approved_by:
-            return jsonify({"message": "Approver is required"}), 400
 
         if not reject_reason:
             return jsonify({"message": "Reject reason is required"}), 400
 
         conn = get_connection()
         cur = conn.cursor()
-
-        admin_user = _get_admin_user(cur, approved_by)
-        if not _is_active_admin(admin_user):
-            conn.rollback()
-            return jsonify({"message": "Only an active system admin can reject warehouse transfers"}), 403
 
         cur.execute("""
             SELECT st.transfer_id
@@ -1175,6 +1182,8 @@ def admin_warehouse_reject_transfer(transfer_id):
 # ADMIN WAREHOUSE - PURCHASE NEEDED
 # =========================
 @inventory_bp.route("/admin/warehouse/purchase-needed", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_purchase_needed():
     try:
         conn = get_connection()
@@ -1269,6 +1278,8 @@ def admin_warehouse_purchase_needed():
 
 
 @inventory_bp.route("/admin/warehouse/purchase-needed/<int:product_id>/create-purchase", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_warehouse_create_purchase(product_id):
     conn = None
     cur = None
@@ -1276,23 +1287,15 @@ def admin_warehouse_create_purchase(product_id):
     try:
         data = request.get_json() or {}
         branch_id = data.get("branch_id")
-        created_by = data.get("created_by")
+        created_by = _current_user_id()
 
         if not branch_id:
             return jsonify({"message": "Warehouse branch is required"}), 400
-
-        if not created_by:
-            return jsonify({"message": "Created by user is required"}), 400
 
         conn = get_connection()
         cur = conn.cursor()
         ensure_product_warehouse_reorder_level_column(cur)
         conn.commit()
-
-        admin_user = _get_admin_user(cur, created_by)
-        if not _is_active_admin(admin_user):
-            conn.rollback()
-            return jsonify({"message": "Only an active system admin can create warehouse purchases"}), 403
 
         cur.execute("""
             SELECT i.quantity_in_stock,
