@@ -124,6 +124,31 @@ def login_required(view_func):
     return wrapper
 
 
+def role_required(*roles):
+    allowed_roles = set(roles)
+
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapper(*args, **kwargs):
+            user = getattr(g, "current_user", None)
+
+            if not user:
+                _, user = _get_session_user()
+                if not user:
+                    return jsonify({"message": "Authentication required"}), 401
+
+                g.current_user = user
+
+            if user.get("role") not in allowed_roles:
+                return jsonify({"message": "Forbidden"}), 403
+
+            return view_func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 # =========================
 # GET BRANCHES (for dropdown)
 # =========================
@@ -277,6 +302,21 @@ def login():
 @login_required
 def me():
     return jsonify(g.current_user), 200
+
+
+# TEMPORARY DEVELOPMENT/TEST ROUTE:
+# Remove this route after manually verifying the RBAC foundation.
+@auth_bp.route("/api/test/admin-rbac", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
+def test_admin_rbac():
+    user = g.current_user
+    return jsonify({
+        "message": "RBAC test passed",
+        "user_id": user.get("user_id"),
+        "role": user.get("role"),
+        "branch_id": user.get("branch_id"),
+    }), 200
 
 
 @auth_bp.route("/logout", methods=["POST"])
