@@ -30,6 +30,7 @@ async function fetchJsonWithTimeout(url, options = {}) {
     try {
         const res = await fetch(url, {
             ...options,
+            credentials: "include",
             signal: controller.signal,
         });
         const data = await res.json().catch(() => null);
@@ -267,6 +268,7 @@ export default function ManagerStockTransfer() {
 
             const transferRes = await fetch(`${API_BASE}/manager/stock-transfer/request`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     from_branch_id: Number(form.from_branch_id),
@@ -328,6 +330,7 @@ export default function ManagerStockTransfer() {
                 `${API_BASE}/manager/stock-transfer/${transferId}/approve`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         approved_by: Number(user.user_id),
@@ -363,6 +366,7 @@ export default function ManagerStockTransfer() {
                 `${API_BASE}/manager/stock-transfer/${rejectTarget.transfer_id}/reject`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         approved_by: Number(user.user_id),
@@ -396,6 +400,7 @@ export default function ManagerStockTransfer() {
                 `${API_BASE}/manager/stock-transfer/${transferId}/receive`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         received_by: Number(user.user_id),

@@ -66,6 +66,7 @@ export default function AdminWarehouseManagement() {
 
     const fetchJson = async (path, options) => {
         const res = await fetch(`${API}${path}`, {
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             ...options,
         });
@@ -285,6 +286,7 @@ export default function AdminWarehouseManagement() {
 
             const res = await fetch(`${API}/admin/stock-transfer/${transfer.transfer_id}/approve`, {
                 method: "PUT",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -321,6 +323,7 @@ export default function AdminWarehouseManagement() {
 
             const res = await fetch(`${API}/admin/stock-transfer/${rejectTransfer.transfer_id}/reject`, {
                 method: "PUT",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },

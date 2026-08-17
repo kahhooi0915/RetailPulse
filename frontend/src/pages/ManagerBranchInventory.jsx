@@ -36,9 +36,9 @@ export default function ManagerBranchInventory() {
     const fetchInventory = useCallback(async (branchId) => {
         try {
             const [invRes, productRes, transferRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/inventory`),
-                fetch(`${API_BASE}/admin/products`),
-                fetch(`${API_BASE}/stock-transfers`),
+                fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
+                fetch(`${API_BASE}/stock-transfers`, { credentials: "include" }),
             ]);
 
             const invData = await invRes.json();
@@ -53,7 +53,8 @@ export default function ManagerBranchInventory() {
             await Promise.all(
                 (Array.isArray(transferData) ? transferData : []).map(async (transfer) => {
                     const itemRes = await fetch(
-                        `${API_BASE}/stock-transfer/${transfer.transfer_id}/items`
+                        `${API_BASE}/stock-transfer/${transfer.transfer_id}/items`,
+                        { credentials: "include" }
                     );
                     const itemData = await itemRes.json();
 
@@ -186,6 +187,7 @@ export default function ManagerBranchInventory() {
 
             const res = await fetch(`${API_BASE}/manager/stock-transfer/auto-suggest`, {
                 method: "POST",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -278,6 +280,7 @@ export default function ManagerBranchInventory() {
                 `${API_BASE}/admin/inventory/${editingItem.product_id}/${editingItem.branch_id}`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: {
                         "Content-Type": "application/json",
                     },

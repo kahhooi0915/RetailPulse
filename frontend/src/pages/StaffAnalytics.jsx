@@ -104,12 +104,12 @@ export default function StaffAnalytics() {
 
       const [productRes, inventoryRes, salesRes, detailRes, userRes, transferRes] =
         await Promise.all([
-          fetch(`${API_BASE}/admin/products`),
-          fetch(`${API_BASE}/admin/inventory`),
-          fetch(`${API_BASE}/admin/sales`),
-          fetch(`${API_BASE}/admin/sale-details`),
-          fetch(`${API_BASE}/admin/users`),
-          fetch(`${API_BASE}/stock-transfers`),
+          fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
+          fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
+          fetch(`${API_BASE}/admin/sales`, { credentials: "include" }),
+          fetch(`${API_BASE}/admin/sale-details`, { credentials: "include" }),
+          fetch(`${API_BASE}/admin/users`, { credentials: "include" }),
+          fetch(`${API_BASE}/stock-transfers`, { credentials: "include" }),
         ]);
 
       setProducts(await productRes.json());
@@ -293,6 +293,7 @@ export default function StaffAnalytics() {
 
       const transferRes = await fetch(`${API_BASE}/staff/stock-transfer/request`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },

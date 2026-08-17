@@ -61,11 +61,11 @@ export default function InventoryOverview() {
 
             const [inventoryRes, branchesRes, productsRes, forecastRes, transferRecordRes] =
                 await Promise.allSettled([
-                    fetch(`${API}/admin/inventory`),
-                    fetch(`${API}/admin/branches`),
-                    fetch(`${API}/admin/products`),
-                    fetch(`${API}/admin/forecast/products`),
-                    fetch(`${API}/admin/stock-transfers/records`),
+                    fetch(`${API}/admin/inventory`, { credentials: "include" }),
+                    fetch(`${API}/admin/branches`, { credentials: "include" }),
+                    fetch(`${API}/admin/products`, { credentials: "include" }),
+                    fetch(`${API}/admin/forecast/products`, { credentials: "include" }),
+                    fetch(`${API}/admin/stock-transfers/records`, { credentials: "include" }),
                 ]);
 
             setInventory(await readArrayResponse(inventoryRes));
@@ -405,6 +405,7 @@ export default function InventoryOverview() {
             setArrangingTransfer(true);
             const res = await fetch(`${API}${path}`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
@@ -431,7 +432,9 @@ export default function InventoryOverview() {
         try {
             setTransferDetailLoading(transferId);
 
-            const res = await fetch(`${API}/admin/stock-transfers/${transferId}/details`);
+            const res = await fetch(`${API}/admin/stock-transfers/${transferId}/details`, {
+                credentials: "include",
+            });
             const data = await res.json();
 
             if (!res.ok) {
@@ -462,6 +465,7 @@ export default function InventoryOverview() {
 
             const res = await fetch(`${API}/admin/products/${productId}/reorder-level`, {
                 method: "PUT",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     reorder_level: recommendedLevel,
