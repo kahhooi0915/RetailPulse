@@ -6,11 +6,11 @@ import subprocess
 import time
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, g, jsonify, request, send_file
 
 from audit import log_audit
 from config import Config
-from db import get_connection
+from routes.auth_routes import login_required, role_required
 
 backup_bp = Blueprint("backup_bp", __name__)
 
@@ -78,48 +78,8 @@ def _psql_command():
     return "psql"
 
 
-def _requester_id():
-    data = request.get_json(silent=True) or {}
-    return (
-        request.args.get("user_id")
-        or request.headers.get("X-User-Id")
-        or data.get("user_id")
-        or data.get("actor_user_id")
-    )
-
-
-def _is_system_admin(user_id):
-    if not user_id:
-        return False
-
-    conn = None
-    cur = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT 1
-            FROM users
-            WHERE user_id = %s
-              AND role = 'SYSTEM_ADMIN'
-              AND status = 'ACTIVE'
-            """,
-            (user_id,),
-        )
-        return cur.fetchone() is not None
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-
-def _require_system_admin():
-    user_id = _requester_id()
-    if not _is_system_admin(user_id):
-        return None, (jsonify({"message": "Only system admins can access database backups"}), 403)
-    return user_id, None
+def _current_user_id():
+    return g.current_user["user_id"]
 
 
 def _ensure_backup_dir():
@@ -270,11 +230,9 @@ def _create_backup_file(prefix=None):
 
 
 @backup_bp.route("/admin/backups", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_backups():
-    _, error = _require_system_admin()
-    if error:
-        return error
-
     try:
         backups = _list_backups()
         storage_used = sum(item["file_size"] for item in backups)
@@ -285,18 +243,16 @@ def get_backups():
 
 
 @backup_bp.route("/admin/backups/create", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def create_backup():
-    user_id, error = _require_system_admin()
-    if error:
-        return error
-
     _ensure_backup_dir()
 
     try:
         filename, duration_seconds = _create_backup_file("backup")
         metadata = _backup_metadata(filename, 1)
         log_audit(
-            user_id,
+            _current_user_id(),
             "CREATE",
             "Database Backup",
             None,
@@ -313,11 +269,9 @@ def create_backup():
 
 
 @backup_bp.route("/admin/backups/verify", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def verify_backup():
-    user_id, error = _require_system_admin()
-    if error:
-        return error
-
     data = request.get_json(silent=True) or {}
     filename = data.get("filename")
     file_path, verify_error = _verify_backup_file(filename)
@@ -327,7 +281,7 @@ def verify_backup():
     try:
         metadata = _backup_metadata(filename, 1)
         log_audit(
-            user_id,
+            _current_user_id(),
             "VERIFY",
             "Database Backup",
             None,
@@ -344,11 +298,9 @@ def verify_backup():
 
 
 @backup_bp.route("/admin/backups/restore", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def restore_backup():
-    user_id, error = _require_system_admin()
-    if error:
-        return error
-
     data = request.get_json(silent=True) or {}
     filename = data.get("filename")
     confirm = data.get("confirm")
@@ -446,7 +398,7 @@ def restore_backup():
                 }), 500
 
             log_audit(
-                user_id,
+                _current_user_id(),
                 "RESTORE",
                 "Database Backup",
                 None,
@@ -506,7 +458,7 @@ def restore_backup():
             }), 500
 
         log_audit(
-            user_id,
+            _current_user_id(),
             "RESTORE",
             "Database Backup",
             None,
@@ -528,11 +480,9 @@ def restore_backup():
 
 
 @backup_bp.route("/admin/backups/download/<path:filename>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def download_backup(filename):
-    _, error = _require_system_admin()
-    if error:
-        return error
-
     file_path = _safe_backup_path(filename)
     if not file_path:
         return jsonify({"message": "Invalid backup filename"}), 400
@@ -543,11 +493,9 @@ def download_backup(filename):
 
 
 @backup_bp.route("/admin/backups/<path:filename>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def delete_backup(filename):
-    user_id, error = _require_system_admin()
-    if error:
-        return error
-
     file_path = _safe_backup_path(filename)
     if not file_path:
         return jsonify({"message": "Invalid backup filename"}), 400
@@ -565,7 +513,7 @@ def delete_backup(filename):
             os.remove(metadata_file)
 
         log_audit(
-            user_id,
+            _current_user_id(),
             "DELETE",
             "Database Backup",
             None,

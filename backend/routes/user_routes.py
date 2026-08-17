@@ -3,6 +3,7 @@ import re
 from werkzeug.security import generate_password_hash
 
 from db import get_connection
+from routes.auth_routes import login_required, role_required
 
 user_bp = Blueprint("user_bp", __name__)
 
@@ -41,6 +42,8 @@ def validate_user_input(name, email, phone, password, role, is_update=False):
 
 
 @user_bp.route("/admin/users", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_get_users():
     try:
         conn = get_connection()
@@ -77,6 +80,8 @@ def admin_get_users():
 
 
 @user_bp.route("/admin/users/<int:user_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_get_single_user(user_id):
     try:
         conn = get_connection()
@@ -116,6 +121,8 @@ def admin_get_single_user(user_id):
 
 
 @user_bp.route("/admin/users", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_add_user():
     try:
         data = request.get_json()
@@ -212,6 +219,8 @@ def admin_add_user():
 
 
 @user_bp.route("/admin/users/<int:user_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_update_user(user_id):
     try:
         data = request.get_json()
@@ -341,6 +350,8 @@ def admin_update_user(user_id):
 
 
 @user_bp.route("/admin/users/<int:user_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_delete_user(user_id):
     try:
         conn = get_connection()
@@ -369,6 +380,8 @@ def admin_delete_user(user_id):
 
 
 @user_bp.route("/admin/users/<int:user_id>/deactivate", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_deactivate_user(user_id):
     try:
         conn = get_connection()
@@ -398,6 +411,8 @@ def admin_deactivate_user(user_id):
 
 
 @user_bp.route("/admin/users/<int:user_id>/activate", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_activate_user(user_id):
     try:
         conn = get_connection()
