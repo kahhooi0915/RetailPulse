@@ -1,13 +1,127 @@
-from flask import Blueprint, request, jsonify
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+from secrets import token_urlsafe
+
+from flask import Blueprint, g, request, jsonify
 import re
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from config import Config
 from db import get_connection
 from audit import log_audit
 
 auth_bp = Blueprint("auth_bp", __name__)
 
 PASSWORD_SPECIAL_CHAR_PATTERN = r"[!@#$%^&*(),.?\":{}|<>]"
+_server_sessions = {}
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+def _session_expiry():
+    return _now() + timedelta(seconds=Config.SESSION_LIFETIME_SECONDS)
+
+
+def _serialize_user(row):
+    return {
+        "user_id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "role": row[3],
+        "branch_id": row[4],
+        "branch_name": row[5],
+        "status": row[6],
+    }
+
+
+def _load_active_user(user_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT u.user_id, u.name, u.email, u.role,
+                   u.branch_id, b.branch_name, u.status
+            FROM users u
+            LEFT JOIN branch b ON u.branch_id = b.branch_id
+            WHERE u.user_id = %s
+              AND u.status = 'ACTIVE'
+        """, (user_id,))
+        row = cur.fetchone()
+        return _serialize_user(row) if row else None
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _set_session_cookie(response, session_id):
+    response.set_cookie(
+        Config.SESSION_COOKIE_NAME,
+        session_id,
+        max_age=Config.SESSION_LIFETIME_SECONDS,
+        httponly=Config.SESSION_COOKIE_HTTPONLY,
+        samesite=Config.SESSION_COOKIE_SAMESITE,
+        secure=Config.SESSION_COOKIE_SECURE,
+        path="/",
+    )
+    return response
+
+
+def _clear_session_cookie(response):
+    response.delete_cookie(
+        Config.SESSION_COOKIE_NAME,
+        httponly=Config.SESSION_COOKIE_HTTPONLY,
+        samesite=Config.SESSION_COOKIE_SAMESITE,
+        secure=Config.SESSION_COOKIE_SECURE,
+        path="/",
+    )
+    return response
+
+
+def _create_server_session(user_id):
+    session_id = token_urlsafe(32)
+    _server_sessions[session_id] = {
+        "user_id": user_id,
+        "expires_at": _session_expiry(),
+    }
+    return session_id
+
+
+def _get_session_user():
+    session_id = request.cookies.get(Config.SESSION_COOKIE_NAME)
+    if not session_id:
+        return None, None
+
+    session_data = _server_sessions.get(session_id)
+    if not session_data:
+        return session_id, None
+
+    if session_data["expires_at"] <= _now():
+        _server_sessions.pop(session_id, None)
+        return session_id, None
+
+    user = _load_active_user(session_data["user_id"])
+    if not user:
+        _server_sessions.pop(session_id, None)
+        return session_id, None
+
+    session_data["expires_at"] = _session_expiry()
+    return session_id, user
+
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        _, user = _get_session_user()
+        if not user:
+            return jsonify({"message": "Authentication required"}), 401
+
+        g.current_user = user
+        return view_func(*args, **kwargs)
+
+    return wrapper
 
 
 # =========================
@@ -139,8 +253,9 @@ def login():
         conn.close()
 
         if user and check_password_hash(user[7], password):
+            session_id = _create_server_session(user[0])
             log_audit(user[0], "LOGIN", "Authentication", user[0], "User logged into the system.")
-            return jsonify({
+            response = jsonify({
                 "user_id": user[0],
                 "name": user[1],
                 "email": user[2],
@@ -148,13 +263,30 @@ def login():
                 "branch_id": user[4],
                 "branch_name": user[5],
                 "status": user[6]
-            }), 200
+            })
+            return _set_session_cookie(response, session_id), 200
         else:
             return jsonify({"message": "Invalid email, password, or inactive account"}), 401
 
     except Exception as e:
         print("ERROR /login:", e)
         return jsonify({"message": str(e)}), 500
+
+
+@auth_bp.route("/me", methods=["GET"])
+@login_required
+def me():
+    return jsonify(g.current_user), 200
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    session_id = request.cookies.get(Config.SESSION_COOKIE_NAME)
+    if session_id:
+        _server_sessions.pop(session_id, None)
+
+    response = jsonify({"message": "Logged out successfully"})
+    return _clear_session_cookie(response), 200
 
 
 # =========================
