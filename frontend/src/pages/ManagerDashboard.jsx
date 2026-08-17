@@ -31,6 +31,7 @@ import {
 } from "recharts";
 import ManagerSidebar from "../components/ManagerSidebar";
 import { formatCurrency } from "../utils/formatCurrency";
+import api from "../api/axios";
 
 const API_BASE = "http://localhost:5000";
 const STOCK_CHART_COLORS = ["#0c2f73", "#1e4db7", "#16a34a", "#f59e0b", "#ef4444"];
@@ -113,10 +114,15 @@ export default function ManagerDashboard() {
         return () => window.clearTimeout(timeoutId);
     }, [fetchData, navigate, user]);
 
-    const logout = () => {
-        sessionStorage.removeItem("user");
-        sessionStorage.removeItem("user");
-        navigate("/");
+    const logout = async () => {
+        try {
+            await api.post("/logout");
+            sessionStorage.removeItem("user");
+            navigate("/");
+        } catch (error) {
+            console.error(error);
+            alert("Logout failed. Please try again.");
+        }
     };
 
     const managerBranchInventory = useMemo(() => {

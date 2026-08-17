@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ManagerSidebar from "../components/ManagerSidebar";
+import api from "../api/axios";
 
 const API_BASE = "http://localhost:5000";
 
@@ -100,9 +101,15 @@ export default function ManagerBranchInventory() {
         }
     }, [toast]);
 
-    const logout = () => {
-        sessionStorage.removeItem("user");
-        navigate("/");
+    const logout = async () => {
+        try {
+            await api.post("/logout");
+            sessionStorage.removeItem("user");
+            navigate("/");
+        } catch (error) {
+            console.error(error);
+            alert("Logout failed. Please try again.");
+        }
     };
 
     const filtered = inventory.filter((item) =>

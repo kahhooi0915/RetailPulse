@@ -28,6 +28,7 @@ import {
 import { motion } from "framer-motion";//for page transition animations
 import { downloadPDF } from "../utils/downloadPDF";
 import { formatCurrency } from "../utils/formatCurrency";
+import api from "../api/axios";
 
 const API_BASE = "http://localhost:5000";
 const DEFAULT_PRODUCT_IMAGE_URL = `${API_BASE}/static/images/products/default.webp`;
@@ -454,10 +455,15 @@ export default function Staff() {
     });
   }, [salesHistory, salesHistorySearch]);
 
-  const logout = () => {
-    sessionStorage.removeItem("user");
-    sessionStorage.removeItem("user");
-    navigate("/");
+  const logout = async () => {
+    try {
+      await api.post("/logout");
+      sessionStorage.removeItem("user");
+      navigate("/");
+    } catch (error) {
+      console.error(error);
+      alert("Logout failed. Please try again.");
+    }
   };
 
   const openHoldList = () => {
