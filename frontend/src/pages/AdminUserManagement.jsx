@@ -1,5 +1,5 @@
 import DashboardLayout from "../layouts/DashboardLayout";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Users,

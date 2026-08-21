@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Children, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Bell,
@@ -1017,7 +1017,7 @@ function SelectInput({ label, value, onChange, children }) {
 }
 
 function TransferSection({ title, desc, badge, empty, children }) {
-    const childArray = React.Children.toArray(children);
+    const childArray = Children.toArray(children);
 
     return (
         <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">

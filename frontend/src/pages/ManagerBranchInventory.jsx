@@ -91,7 +91,6 @@ export default function ManagerBranchInventory() {
             return;
         }
 
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         fetchInventory(user.branch_id);
     }, [fetchInventory, navigate, user]);
 

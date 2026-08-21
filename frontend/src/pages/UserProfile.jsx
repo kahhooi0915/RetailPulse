@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ShoppingCart,
   BarChart3,
   User,
-  LogOut,
   Bell,
   Settings,
   Save,

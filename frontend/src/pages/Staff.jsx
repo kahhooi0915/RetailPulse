@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search,
@@ -7,8 +7,6 @@ import {
   ShoppingCart,
   BarChart3,
   History,
-  User,
-  LogOut,
   Plus,
   Minus,
   Trash2,

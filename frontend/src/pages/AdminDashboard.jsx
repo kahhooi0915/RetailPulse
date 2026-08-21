@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -860,7 +860,7 @@ export default function AdminDashboard() {
                 onClick={() => setShowNotifications(false)}
                 className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
               >
-                ✕
+                X
               </button>
             </div>
 
@@ -1131,32 +1131,6 @@ function EmptyBox({ text }) {
   return (
     <div className="rounded-xl bg-[#f4fbff] p-5 text-sm font-semibold text-[#6f85a3]">
       {text}
-    </div>
-  );
-}
-
-function Modal({ title, children, onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
-      <div className="max-h-[90vh] w-[520px] overflow-y-auto rounded-3xl bg-white p-7 shadow-2xl">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-extrabold text-[#07102f]">{title}</h2>
-            <p className="mt-1 text-sm text-[#6f85a3]">
-              Configure and review admin dashboard options.
-            </p>
-          </div>
-
-          <button
-            onClick={onClose}
-            className="rounded-full bg-[#eef6fb] px-3 py-1 text-sm font-bold text-[#254e7a]"
-          >
-            ✕
-          </button>
-        </div>
-
-        {children}
-      </div>
     </div>
   );
 }

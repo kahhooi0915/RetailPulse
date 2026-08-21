@@ -88,7 +88,6 @@ export default function DatabaseBackupPage() {
             return;
         }
 
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         loadBackups();
     }, [loadBackups, navigate, user]);
 

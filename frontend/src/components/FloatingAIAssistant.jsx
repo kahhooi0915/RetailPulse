@@ -93,7 +93,11 @@ export default function FloatingAIAssistant({ notificationCount = 0 }) {
 
         try {
             console.log("Calling AI API:", question);
-            const response = await axios.post(`${API_BASE}/api/ai/chat`, { question });
+            const response = await axios.post(
+                `${API_BASE}/api/ai/chat`,
+                { question },
+                { withCredentials: true }
+            );
             console.log("AI API response:", response.data);
 
             setMessages((prev) => [
