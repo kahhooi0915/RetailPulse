@@ -15,6 +15,7 @@ import {
     XCircle,
 } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import StockTransferTimeline from "../components/StockTransferTimeline";
 
 const API = "http://localhost:5000";
 const ROWS_PER_PAGE = 8;
@@ -979,6 +980,8 @@ function TransferDetailsModal({ transfer, onClose }) {
                             <InfoItem label="Reject Reason" value={transfer.reject_reason || "-"} />
                         </InfoGroup>
                     </div>
+
+                    <StockTransferTimeline transfer={transfer} formatDateTime={formatDateTime} />
 
                     <div className="rounded-2xl bg-[#f8fcff] p-5">
                         <h3 className="mb-4 text-lg font-extrabold text-[#07102f]">

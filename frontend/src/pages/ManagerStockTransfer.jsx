@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ManagerSidebar from "../components/ManagerSidebar";
+import StockTransferTimeline from "../components/StockTransferTimeline";
 import api from "../api/axios";
 
 const API_BASE = "http://localhost:5000";
@@ -1257,6 +1258,10 @@ function TransferDetailsModal({ transfer, items, getBranchName, onClose }) {
                     <InfoBlock label="Requested Time" value={formatDateTime(transfer.transfer_date)} />
                     <InfoBlock label="Decision Time" value={formatDateTime(transfer.approved_at)} />
                     <InfoBlock label="Reject Reason" value={transfer.status === "REJECTED" ? transfer.reject_reason || "-" : "-"} />
+                </div>
+
+                <div className="mt-5">
+                    <StockTransferTimeline transfer={transfer} formatDateTime={formatDateTime} />
                 </div>
 
                 <div className="mt-5 rounded-2xl bg-[#f8fcff] p-4">

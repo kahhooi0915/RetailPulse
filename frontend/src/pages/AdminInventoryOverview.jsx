@@ -13,6 +13,7 @@ import {
     X,
 } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import StockTransferTimeline from "../components/StockTransferTimeline";
 
 const API = "http://localhost:5000";
 const DEFAULT_REORDER_LEVEL = 10;
@@ -1387,6 +1388,8 @@ function TransferDetailsModal({ details, onClose }) {
                             <InfoRow label="Quantity" value={`${transfer.requested_quantity ?? transfer.quantity ?? totalTransferQuantity(items)} units`} />
                         </InfoGroup>
                     </div>
+
+                    <StockTransferTimeline transfer={transfer} formatDateTime={formatDateTime} />
 
                     <div className="rounded-2xl bg-[#f8fcff] p-5">
                         <h3 className="mb-4 text-lg font-extrabold text-[#07102f]">

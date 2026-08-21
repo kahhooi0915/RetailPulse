@@ -128,9 +128,9 @@ export default function AdminSupplierManagement() {
             setLoading(true);
 
             const [supplierRes, productRes, supplierProductRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/suppliers`),
-                fetch(`${API_BASE}/admin/products?available=1`),
-                fetch(`${API_BASE}/admin/supplier-products`),
+                fetch(`${API_BASE}/admin/suppliers`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/products?available=1`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/supplier-products`, { credentials: "include" }),
             ]);
 
             const supplierData = await supplierRes.json();
@@ -290,6 +290,7 @@ export default function AdminSupplierManagement() {
 
             const res = await fetch(url, {
                 method,
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     ...supplierForm,
@@ -357,6 +358,7 @@ export default function AdminSupplierManagement() {
 
             const res = await fetch(`${API_BASE}/admin/supplier-products/bulk`, {
                 method: "POST",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -397,6 +399,7 @@ export default function AdminSupplierManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/suppliers/${supplier.supplier_id}`, {
                 method: "DELETE",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_user_id: user.user_id }),
             });
@@ -436,6 +439,7 @@ export default function AdminSupplierManagement() {
                 `${API_BASE}/admin/supplier-products/${editSupplierProduct.supplier_id}/${editSupplierProduct.product_id}`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         purchase_price: Number(supplierProductEditForm.purchase_price),
@@ -470,7 +474,7 @@ export default function AdminSupplierManagement() {
 
             const res = await fetch(
                 `${API_BASE}/admin/supplier-products/${deleteSupplierProduct.supplier_id}/${deleteSupplierProduct.product_id}`,
-                { method: "DELETE" }
+                { method: "DELETE", credentials: "include" }
             );
 
             const data = await res.json();

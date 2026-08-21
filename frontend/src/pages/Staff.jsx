@@ -171,9 +171,9 @@ export default function Staff() {
       setLoading(true);
 
       const [categoryRes, productRes, inventoryRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/categories`),
-        fetch(`${API_BASE}/admin/products?available=1`),
-        fetch(`${API_BASE}/admin/inventory`),
+        fetch(`${API_BASE}/admin/categories`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/products?available=1`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
       ]);
 
       const categoryData = await categoryRes.json();
@@ -288,6 +288,7 @@ export default function Staff() {
 
       const res = await fetch(`${API_BASE}/staff/email-receipt`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -540,7 +541,7 @@ export default function Staff() {
     try {
       setLoadingSalesHistory(true);
 
-      const res = await fetch(`${API_BASE}/admin/sales`);
+      const res = await fetch(`${API_BASE}/admin/sales`, { credentials: "include" });
       const data = await res.json();
 
       if (!res.ok) {
@@ -586,7 +587,7 @@ export default function Staff() {
       try {
         setLoadingSalesHistory(true);
 
-        const res = await fetch(`${API_BASE}/admin/sales`);
+        const res = await fetch(`${API_BASE}/admin/sales`, { credentials: "include" });
         const data = await res.json();
 
         if (!res.ok) {
@@ -615,7 +616,9 @@ export default function Staff() {
 
   const reprintSaleReceipt = async (sale) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/sales/${sale.sale_id}/details`);
+      const res = await fetch(`${API_BASE}/admin/sales/${sale.sale_id}/details`, {
+        credentials: "include",
+      });
       const data = await res.json();
 
       if (!res.ok) {
@@ -681,6 +684,7 @@ export default function Staff() {
     try {
       const saleRes = await fetch(`${API_BASE}/admin/sales`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -704,6 +708,7 @@ export default function Staff() {
       for (const item of cart) {
         const detailRes = await fetch(`${API_BASE}/admin/sale-details`, {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
@@ -725,6 +730,7 @@ export default function Staff() {
 
       const updateSaleRes = await fetch(`${API_BASE}/admin/sales/${saleData.sale_id}`, {
         method: "PUT",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },

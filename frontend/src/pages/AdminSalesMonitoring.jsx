@@ -35,8 +35,8 @@ export default function SalesMonitoring() {
             setLoading(true);
 
             const [salesRes, detailsRes] = await Promise.all([
-                fetch(`${API}/admin/sales`),
-                fetch(`${API}/admin/sale-details`),
+                fetch(`${API}/admin/sales`, { credentials: "include" }),
+                fetch(`${API}/admin/sale-details`, { credentials: "include" }),
             ]);
 
             const salesData = await salesRes.json();

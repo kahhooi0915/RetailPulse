@@ -139,8 +139,8 @@ export default function AdminUserManagement() {
             setLoading(true);
 
             const [usersRes, branchesRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/users`),
-                fetch(`${API_BASE}/admin/branches`),
+                fetch(`${API_BASE}/admin/users`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/branches`, { credentials: "include" }),
             ]);
 
             const usersData = await usersRes.json();
@@ -331,6 +331,7 @@ export default function AdminUserManagement() {
 
             const res = await fetch(url, {
                 method,
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -365,6 +366,7 @@ export default function AdminUserManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/users/${selectedUser.user_id}`, {
                 method: "DELETE",
+                credentials: "include",
             });
 
             const data = await res.json();
@@ -391,6 +393,7 @@ export default function AdminUserManagement() {
                 `${API_BASE}/admin/users/${selectedUser.user_id}/${action}`,
                 {
                     method: "PUT",
+                    credentials: "include",
                 }
             );
 

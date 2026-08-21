@@ -102,22 +102,32 @@ export default function StaffAnalytics() {
     try {
       setLoading(true);
 
-      const [productRes, inventoryRes, salesRes, detailRes, userRes, transferRes] =
+      const [productRes, inventoryRes, salesRes, detailRes, branchUserRes, transferRes] =
         await Promise.all([
           fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
           fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
           fetch(`${API_BASE}/admin/sales`, { credentials: "include" }),
           fetch(`${API_BASE}/admin/sale-details`, { credentials: "include" }),
-          fetch(`${API_BASE}/admin/users`, { credentials: "include" }),
+          fetch(`${API_BASE}/staff/branch-users`, { credentials: "include" }),
           fetch(`${API_BASE}/stock-transfers`, { credentials: "include" }),
         ]);
 
-      setProducts(await productRes.json());
-      setInventory(await inventoryRes.json());
-      setSales(await salesRes.json());
-      setSaleDetails(await detailRes.json());
-      setUsers(await userRes.json());
-      setStockTransfers(await transferRes.json());
+      const [productData, inventoryData, salesData, detailData, branchUserData, transferData] =
+        await Promise.all([
+          productRes.json(),
+          inventoryRes.json(),
+          salesRes.json(),
+          detailRes.json(),
+          branchUserRes.json(),
+          transferRes.json(),
+        ]);
+
+      setProducts(Array.isArray(productData) ? productData : []);
+      setInventory(Array.isArray(inventoryData) ? inventoryData : []);
+      setSales(Array.isArray(salesData) ? salesData : []);
+      setSaleDetails(Array.isArray(detailData) ? detailData : []);
+      setUsers(Array.isArray(branchUserData) ? branchUserData : savedUser ? [savedUser] : []);
+      setStockTransfers(Array.isArray(transferData) ? transferData : []);
     } catch (error) {
       console.error(error);
       alert("Failed to load analytics data.");
@@ -613,7 +623,7 @@ export default function StaffAnalytics() {
             <div className="rounded-2xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-bold uppercase tracking-widest text-[#6f85a3]">
-                  Staff
+                  Branch Team
                 </p>
                 <Users className="text-[#1e4db7]" size={22} />
               </div>
@@ -746,7 +756,7 @@ export default function StaffAnalytics() {
                     </div>
 
                     <span className="rounded-full bg-[#dcf0f9] px-3 py-1 text-xs font-bold text-[#1f4e77]">
-                      {staff.role}
+                      {formatPosition(staff.role)}
                     </span>
                   </div>
                 ))}
@@ -1100,4 +1110,13 @@ export default function StaffAnalytics() {
       )}
     </div>
   );
+}
+
+function formatPosition(role) {
+  const labels = {
+    INVENTORY_MANAGER: "Inventory Manager",
+    BRANCH_STAFF: "Branch Staff",
+  };
+
+  return labels[role] || String(role || "-").replace(/_/g, " ");
 }

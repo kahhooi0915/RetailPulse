@@ -52,9 +52,9 @@ export default function AdminReportsForecasting() {
             setLoading(true);
 
             const [forecastRes, productRes, inventoryRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/forecast/products`),
-                fetch(`${API_BASE}/admin/products`),
-                fetch(`${API_BASE}/admin/inventory`),
+                fetch(`${API_BASE}/admin/forecast/products`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
             ]);
 
             const forecastJson = await forecastRes.json();

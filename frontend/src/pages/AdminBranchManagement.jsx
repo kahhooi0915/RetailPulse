@@ -106,7 +106,7 @@ export default function AdminBranchManagement() {
         try {
             setLoading(true);
 
-            const res = await fetch(`${API_BASE}/admin/branches`);
+            const res = await fetch(`${API_BASE}/admin/branches`, { credentials: "include" });
             const data = await res.json();
 
             if (!res.ok) {
@@ -251,6 +251,7 @@ export default function AdminBranchManagement() {
 
             const res = await fetch(url, {
                 method,
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -297,6 +298,7 @@ export default function AdminBranchManagement() {
                 `${API_BASE}/admin/branches/${selectedBranch.branch_id}`,
                 {
                     method: "DELETE",
+                    credentials: "include",
                 }
             );
 

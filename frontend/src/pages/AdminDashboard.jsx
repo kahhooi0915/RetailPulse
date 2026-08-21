@@ -114,14 +114,14 @@ export default function AdminDashboard() {
         dashboardSummaryRes,
         recentActivityRes,
       ] = await Promise.all([
-        fetch(`${API_BASE}/admin/users`),
-        fetch(`${API_BASE}/admin/branches`),
-        fetch(`${API_BASE}/admin/products`),
-        fetch(`${API_BASE}/admin/categories`),
-        fetch(`${API_BASE}/admin/inventory`),
-        fetch(`${API_BASE}/admin/sales`),
-        fetch(`${API_BASE}/admin/dashboard/summary?${getDashboardPeriodQuery(settingsData.dashboardView)}`),
-        fetch(`${API_BASE}/admin/audit-logs?user_id=${user.user_id}&limit=5`),
+        fetch(`${API_BASE}/admin/users`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/branches`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/categories`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/sales`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/dashboard/summary?${getDashboardPeriodQuery(settingsData.dashboardView)}`, { credentials: "include" }),
+        fetch(`${API_BASE}/admin/audit-logs?user_id=${user.user_id}&limit=5`, { credentials: "include" }),
       ]);
 
       const usersData = await usersRes.json();

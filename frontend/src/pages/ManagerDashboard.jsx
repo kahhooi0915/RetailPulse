@@ -75,11 +75,11 @@ export default function ManagerDashboard() {
             setLoading(true);
 
             const [inventoryRes, salesRes, saleDetailRes, branchRes, productRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/inventory`),
-                fetch(`${API_BASE}/admin/sales`),
-                fetch(`${API_BASE}/admin/sale-details`),
-                fetch(`${API_BASE}/admin/branches`),
-                fetch(`${API_BASE}/admin/products`),
+                fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/sales`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/sale-details`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/branches`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
             ]);
 
             const inventoryData = await inventoryRes.json();

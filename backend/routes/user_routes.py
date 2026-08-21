@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 import re
 from werkzeug.security import generate_password_hash
 
@@ -76,6 +76,58 @@ def admin_get_users():
 
     except Exception as e:
         print("ERROR /admin/users GET:", e)
+        return jsonify({"message": str(e)}), 500
+
+
+@user_bp.route("/staff/branch-users", methods=["GET"])
+@login_required
+@role_required("BRANCH_STAFF", "INVENTORY_MANAGER")
+def get_branch_users():
+    try:
+        branch_id = g.current_user.get("branch_id")
+
+        if not branch_id:
+            return jsonify({"message": "Branch is required"}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT u.user_id, u.user_code, u.name, u.email, u.phone,
+                   u.role, u.branch_id, b.branch_name, u.status
+            FROM users u
+            LEFT JOIN branch b ON u.branch_id = b.branch_id
+            WHERE u.branch_id = %s
+              AND u.status = 'ACTIVE'
+              AND u.role IN ('BRANCH_STAFF', 'INVENTORY_MANAGER')
+            ORDER BY
+                CASE u.role
+                    WHEN 'INVENTORY_MANAGER' THEN 1
+                    WHEN 'BRANCH_STAFF' THEN 2
+                    ELSE 3
+                END,
+                u.name
+        """, (branch_id,))
+
+        users = [{
+            "user_id": r[0],
+            "user_code": r[1],
+            "name": r[2],
+            "email": r[3],
+            "phone": r[4],
+            "role": r[5],
+            "branch_id": r[6],
+            "branch_name": r[7],
+            "status": r[8]
+        } for r in cur.fetchall()]
+
+        cur.close()
+        conn.close()
+
+        return jsonify(users), 200
+
+    except Exception as e:
+        print("ERROR /staff/branch-users GET:", e)
         return jsonify({"message": str(e)}), 500
 
 
