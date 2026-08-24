@@ -1,0 +1,4 @@
+Label,# Samples,Average,Min,Max,Std. Dev.,Error %,Throughput,Received KB/sec,Sent KB/sec,Avg. Bytes
+Login - Admin,45,2899,358,6224,1921.41,0.000%,.05323,0.03,0.01,606.0
+Forecast Products,45,285496,23230,567382,192399.01,0.000%,.05199,1.00,0.01,19674.0
+TOTAL,90,144197,358,567382,196152.44,0.000%,.10359,1.03,0.03,10140.0

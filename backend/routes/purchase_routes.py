@@ -574,7 +574,7 @@ def get_purchases():
                 "created_by_name": row[4],
                 "purchase_date": row[5].isoformat() if row[5] else None,
                 "status": row[6],
-                "total_amount": float(row[7])
+                "total_amount": float(row[7] or 0)
             })
 
         cur.close()

@@ -5,7 +5,9 @@ import {
   ArrowLeftRight,
   BarChart3,
   Building2,
+  ChevronRight,
   CircleDollarSign,
+  ClipboardList,
   FileDown,
   FolderKanban,
   HelpCircle,
@@ -20,12 +22,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   LabelList,
   XAxis,
   YAxis,
@@ -56,6 +54,7 @@ export default function AdminDashboard() {
   const [categories, setCategories] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [sales, setSales] = useState([]);
+  const [purchases, setPurchases] = useState([]);
   const [dashboardSummary, setDashboardSummary] = useState({
     pending_transfers: 0,
     total_sales: 0,
@@ -124,6 +123,12 @@ export default function AdminDashboard() {
         fetch(`${API_BASE}/admin/audit-logs?user_id=${user.user_id}&limit=5`, { credentials: "include" }),
       ]);
 
+      const purchasesResult = await fetch(`${API_BASE}/admin/purchases`, {
+        credentials: "include",
+      })
+        .then(async (res) => (res.ok ? res.json() : []))
+        .catch(() => []);
+
       const usersData = await usersRes.json();
       const branchesData = await branchesRes.json();
       const productsData = await productsRes.json();
@@ -139,6 +144,7 @@ export default function AdminDashboard() {
       setCategories(Array.isArray(categoriesData) ? categoriesData : []);
       setInventory(Array.isArray(inventoryData) ? inventoryData : []);
       setSales(Array.isArray(salesData) ? salesData : []);
+      setPurchases(Array.isArray(purchasesResult) ? purchasesResult : []);
       setDashboardSummary(dashboardSummaryData || {
         pending_transfers: 0,
         total_sales: 0,
@@ -190,6 +196,7 @@ export default function AdminDashboard() {
   const totalSales = Number(dashboardSummary.total_sales || 0);
   const grossProfit = Number(dashboardSummary.gross_profit || 0);
   const inventoryValue = Number(dashboardSummary.inventory_value || 0);
+  const pendingTransfers = Number(dashboardSummary.pending_transfers || 0);
 
   const lowStockItems = useMemo(() => {
     return inventory.filter((item) => {
@@ -209,6 +216,12 @@ export default function AdminDashboard() {
   }, [branches, inventory, products]);
 
   const notificationCount = notificationRead ? 0 : lowStockItems.length;
+
+  const pendingPurchases = useMemo(() => {
+    return purchases.filter((purchase) =>
+      ["PENDING", "ORDERED"].includes(purchase.status)
+    ).length;
+  }, [purchases]);
 
   useEffect(() => {
     const previousCount = Number(
@@ -251,37 +264,95 @@ export default function AdminDashboard() {
     .sort((a, b) => Number(b.revenue || 0) - Number(a.revenue || 0))
     .slice(0, 5);
 
-  const branchSalesPieData = top5Branches.map((branch) => ({
-    name: branch.branch_name.replace("RetailPulse ", ""),
-    value: Number(branch.revenue || 0),
-  }));
+  const quickActions = [
+    {
+      title: "Review Low Stock",
+      value: lowStockItems.length,
+      desc: "Open inventory items that need replenishment.",
+      icon: AlertTriangle,
+      color: "text-orange-600",
+      bg: "bg-orange-50",
+      border: "border-orange-100",
+      hoverBorder: "hover:border-orange-300",
+      accent: "bg-orange-500",
+      path: "/admin/inventory",
+    },
+    {
+      title: "Process Transfers",
+      value: pendingTransfers,
+      desc: "Check requests awaiting approval or processing.",
+      icon: ArrowLeftRight,
+      color: "text-[#1e4db7]",
+      bg: "bg-blue-50",
+      border: "border-blue-100",
+      hoverBorder: "hover:border-blue-300",
+      accent: "bg-[#1e4db7]",
+      path: "/admin/warehouse",
+    },
+    {
+      title: "Manage Purchases",
+      value: pendingPurchases,
+      desc: "Follow up pending and ordered purchase orders.",
+      icon: ShoppingCart,
+      color: "text-green-600",
+      bg: "bg-green-50",
+      border: "border-green-100",
+      hoverBorder: "hover:border-green-300",
+      accent: "bg-green-500",
+      path: "/admin/purchases",
+    },
+    {
+      title: "View Forecasts",
+      value: "Ready",
+      desc: "Review next-month demand and sales predictions.",
+      icon: TrendingUp,
+      color: "text-purple-600",
+      bg: "bg-purple-50",
+      border: "border-purple-100",
+      hoverBorder: "hover:border-purple-300",
+      accent: "bg-purple-500",
+      path: "/admin/reports",
+    },
+    {
+      title: "Audit Activity",
+      value: recentActivity.length,
+      desc: "Inspect the latest system activity records.",
+      icon: ClipboardList,
+      color: "text-slate-600",
+      bg: "bg-slate-100",
+      border: "border-slate-200",
+      hoverBorder: "hover:border-slate-300",
+      accent: "bg-slate-500",
+      path: "/admin/activity-log",
+    },
+  ];
 
-  const pieColors = ["#1e4db7", "#22c55e", "#f97316", "#8b5cf6", "#ef4444"];
-
-  const recentSales = [...sales].slice(-6).reverse();
-
-  const topProducts = useMemo(() => {
-    const grouped = {};
-
-    inventory.forEach((item) => {
-      const productId = item.product_id;
-
-      if (!grouped[productId]) {
-        grouped[productId] = {
-          product_id: productId,
-          product_code: item.product_code,
-          product_name: item.product_name,
-          quantity: 0,
-        };
-      }
-
-      grouped[productId].quantity += Number(item.quantity_in_stock || 0);
-    });
-
-    return Object.values(grouped)
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 5);
-  }, [inventory]);
+  const priorityAlerts = [
+    {
+      title: "Low Stock Needs Review",
+      desc: `${lowStockItems.length} item(s) are at or below reorder level.`,
+      count: lowStockItems.length,
+      action: "Open Inventory",
+      path: "/admin/inventory",
+      tone: "orange",
+    },
+    {
+      title: "Transfers Waiting",
+      desc: `${pendingTransfers} transfer request(s) are still open.`,
+      count: pendingTransfers,
+      action: "Open Warehouse",
+      path: "/admin/warehouse",
+      tone: "blue",
+    },
+    {
+      title: "Purchases Need Action",
+      desc: `${pendingPurchases} purchase order(s) are pending or ordered.`,
+      count: pendingPurchases,
+      action: "Open Purchases",
+      path: "/admin/purchases",
+      tone: "green",
+    },
+  ];
 
   return (
     <>
@@ -525,7 +596,7 @@ export default function AdminDashboard() {
               <SummaryCard title="Sales Records" value={sales.length} icon={ShoppingCart} color="text-[#1e4db7]" />
               <SummaryCard
                 title="Pending Transfers"
-                value={dashboardSummary.pending_transfers || 0}
+                value={pendingTransfers}
                 icon={ArrowLeftRight}
                 color="text-orange-600"
                 helperText="Awaiting approval or processing"
@@ -533,310 +604,88 @@ export default function AdminDashboard() {
               <SummaryCard title="Low Stock Items" value={lowStockItems.length} icon={AlertTriangle} color="text-orange-600" />
             </section>
 
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
+            <section className="rounded-2xl border border-blue-100 bg-[#f3f9ff] p-6 shadow-sm">
+              <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Quick Actions
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    Jump straight to the operational areas that need review.
+                  </p>
+                </div>
+                <span className="w-fit rounded-full bg-[#eef6fb] px-4 py-2 text-xs font-extrabold uppercase tracking-widest text-[#1e4db7]">
+                  Action Center
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-5">
+                {quickActions.map((action) => (
+                  <QuickActionCard
+                    key={action.title}
+                    {...action}
+                    onClick={() => navigate(action.path)}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h2 className="text-xl font-extrabold text-[#07102f]">
+                    Priority Alerts
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6f85a3]">
+                    A compact view of the operational issues most likely to need action.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/admin/activity-log")}
+                  className="inline-flex w-fit items-center gap-2 rounded-xl border border-blue-100 px-4 py-2 text-xs font-extrabold uppercase tracking-widest text-[#1e4db7] transition hover:border-[#1e4db7] hover:bg-[#f8fcff]"
+                >
+                  Activity Log
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                {priorityAlerts.map((alert) => (
+                  <PriorityAlertCard
+                    key={alert.title}
+                    {...alert}
+                    onClick={() => navigate(alert.path)}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <section className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
+              <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
                 <h2 className="text-xl font-extrabold text-[#07102f]">
                   Top Performing Sales Branches
                 </h2>
                 <p className="mt-1 text-sm text-[#6f85a3]">
                   Top 5 sales branches with the highest revenue.
                 </p>
-
-                <BranchRevenueBarChart
-                  branches={top5Branches}
-                  formatCurrency={formatCurrency}
-                  barColor="#1e4db7"
-                />
-              </div>
-
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-extrabold text-[#07102f]">
-                  System Operations
-                </h2>
-                <p className="mt-1 text-sm text-[#6f85a3]">
-                  Latest system activity summary.
-                </p>
-
-                <div className="mt-5 space-y-4">
-                  <ActivityDot color="bg-blue-600" title="Product Records" desc={`${products.length} product(s) available.`} />
-                  <ActivityDot color="bg-green-600" title="Sales Records" desc={`${sales.length} sale transaction(s) recorded.`} />
-                  <ActivityDot color="bg-orange-500" title="Low Stock Alert" desc={`${lowStockItems.length} item(s) below reorder level.`} />
-                  <ActivityDot color="bg-slate-400" title="Branch Records" desc={`${branches.length} branch(es) registered.`} />
                 </div>
-              </div>
-            </section>
-
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-extrabold text-[#07102f]">
-                  Top 5 Sales Distribution by Branch
-                </h2>
-                <p className="mt-1 text-sm text-[#6f85a3]">
-                  Visual breakdown of total sales revenue for the top five performing branches.
-                </p>
-
-                <div className="admin-dashboard-chart mt-6">
-                  {branchSalesPieData.length > 0 ? (
-                    <>
-                      <div className="admin-dashboard-screen-chart h-[300px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={branchSalesPieData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              outerRadius={90}
-                              label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
-                            >
-                              {branchSalesPieData.map((entry, index) => (
-                                <Cell
-                                  key={`cell-${index}`}
-                                  fill={pieColors[index % pieColors.length]}
-                                />
-                              ))}
-                            </Pie>
-                            <Tooltip formatter={(value) => formatCurrency(value)} />
-                            <Legend />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <PrintDistributionChart
-                        data={branchSalesPieData}
-                        colors={pieColors}
-                        formatValue={formatCurrency}
-                      />
-                    </>
-                  ) : (
-                    <EmptyBox text="No branch sales data available for chart." />
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/admin/sales")}
+                  className="inline-flex w-fit items-center gap-2 rounded-xl bg-[#eef6fb] px-4 py-2 text-xs font-extrabold uppercase tracking-widest text-[#1e4db7] transition hover:bg-blue-100"
+                >
+                  Sales Details
+                  <ChevronRight size={15} />
+                </button>
               </div>
 
-              <div className="admin-dashboard-chart-card rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-extrabold text-[#07102f]">
-                  Inventory Status Overview
-                </h2>
-                <p className="mt-1 text-sm text-[#6f85a3]">
-                  Comparison between low stock and normal stock items.
-                </p>
-
-                <div className="admin-dashboard-chart mt-6">
-                  <div className="admin-dashboard-screen-chart h-[300px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: "Low Stock", value: lowStockItems.length },
-                            {
-                              name: "Normal Stock",
-                              value: Math.max(inventory.length - lowStockItems.length, 0),
-                            },
-                          ]}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={90}
-                          label={({ name, percent }) =>
-                            `${name}: ${(percent * 100).toFixed(0)}%`
-                          }
-                        >
-                          <Cell fill="#ef4444" />
-                          <Cell fill="#1e4db7" />
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <PrintDistributionChart
-                    data={[
-                      { name: "Low Stock", value: lowStockItems.length },
-                      {
-                        name: "Normal Stock",
-                        value: Math.max(inventory.length - lowStockItems.length, 0),
-                      },
-                    ]}
-                    colors={["#ef4444", "#1e4db7"]}
-                  />
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                Recent Activity
-              </h2>
-
-              <div className="overflow-hidden rounded-2xl border border-blue-50">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
-                    <tr>
-                      <th className="px-4 py-3">Timestamp</th>
-                      <th className="px-4 py-3">User</th>
-                      <th className="px-4 py-3">Action</th>
-                      <th className="px-4 py-3">Description</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {recentActivity.map((item) => (
-                      <tr key={item.audit_id} className="border-t">
-                        <td className="px-4 py-4 font-semibold">
-                          {formatDateTime(item.created_at)}
-                        </td>
-                        <td className="px-4 py-4 font-bold">{item.user_name}</td>
-                        <td className="px-4 py-4 font-bold text-[#1e4db7]">{item.action}</td>
-                        <td className="px-4 py-4 text-[#4c6280]">
-                          {shortText(item.description)}
-                        </td>
-                      </tr>
-                    ))}
-
-                    {recentActivity.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan="4"
-                          className="px-4 py-6 text-center font-semibold text-[#6f85a3]"
-                        >
-                          No recent activity found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                  Top Stock Products
-                </h2>
-
-                <div className="space-y-3">
-                  {topProducts.map((item) => (
-                    <div
-                      key={item.product_id}
-                      className="flex items-center justify-between rounded-2xl bg-[#f8fcff] p-4"
-                    >
-                      <div>
-                        <p className="font-extrabold text-[#17325c]">
-                          {item.product_name}
-                        </p>
-                        <p className="text-xs font-bold text-[#6f85a3]">
-                          {item.product_code}
-                        </p>
-                      </div>
-
-                      <span className="rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-[#1e4db7]">
-                        {item.quantity}
-                      </span>
-                    </div>
-                  ))}
-
-                  {topProducts.length === 0 && (
-                    <EmptyBox text="No product stock data found." />
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                  Critical Low Stock
-                </h2>
-
-                <div className="overflow-hidden rounded-2xl border border-blue-50">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
-                      <tr>
-                        <th className="px-4 py-3">Product</th>
-                        <th className="px-4 py-3">Branch</th>
-                        <th className="px-4 py-3">Stock</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {lowStockItems.slice(0, 6).map((item) => (
-                        <tr
-                          key={`${item.product_id}-${item.branch_id}`}
-                          className="border-t"
-                        >
-                          <td className="px-4 py-4 font-bold">
-                            {item.product_name}
-                          </td>
-                          <td className="px-4 py-4">{item.branch_name}</td>
-                          <td className="px-4 py-4">
-                            <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-extrabold text-red-600">
-                              {item.quantity_in_stock} left
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-
-                      {lowStockItems.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan="3"
-                            className="px-4 py-6 text-center font-semibold text-[#6f85a3]"
-                          >
-                            No critical low stock items found.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-extrabold text-[#07102f]">
-                Recent Sales
-              </h2>
-
-              <div className="overflow-hidden rounded-2xl border border-blue-50">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-[#eef6fb] text-xs uppercase text-[#6f85a3]">
-                    <tr>
-                      <th className="px-4 py-3">Sale Code</th>
-                      <th className="px-4 py-3">Branch</th>
-                      <th className="px-4 py-3">Staff</th>
-                      <th className="px-4 py-3">Amount</th>
-                      <th className="px-4 py-3">Payment</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {recentSales.map((sale) => (
-                      <tr key={sale.sale_id} className="border-t">
-                        <td className="px-4 py-4 font-bold">
-                          {sale.sale_code}
-                        </td>
-                        <td className="px-4 py-4">{sale.branch_name}</td>
-                        <td className="px-4 py-4">{sale.user_name}</td>
-                        <td className="px-4 py-4 font-bold text-green-600">
-                          {formatCurrency(sale.total_amount)}
-                        </td>
-                        <td className="px-4 py-4">{sale.payment_method}</td>
-                      </tr>
-                    ))}
-
-                    {recentSales.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan="5"
-                          className="px-4 py-6 text-center font-semibold text-[#6f85a3]"
-                        >
-                          No recent sales found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <BranchRevenueBarChart
+                branches={top5Branches}
+                formatCurrency={formatCurrency}
+                barColor="#1e4db7"
+              />
             </section>
           </>
         )}
@@ -952,24 +801,76 @@ function SummaryCard({ title, value, icon: Icon, color, helperText, tooltipText 
   );
 }
 
-function formatDateTime(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString();
-}
-
-function shortText(value) {
-  if (!value) return "-";
-  return value.length > 80 ? `${value.slice(0, 80)}...` : value;
-}
-
-function ActivityDot({ color, title, desc }) {
+function QuickActionCard({
+  title,
+  value,
+  desc,
+  icon: Icon,
+  color,
+  bg,
+  border,
+  hoverBorder,
+  accent,
+  onClick,
+}) {
   return (
-    <div className="flex gap-3">
-      <span className={`mt-2 h-3 w-3 rounded-full ${color}`} />
-      <div>
-        <p className="font-extrabold text-[#17325c]">{title}</p>
-        <p className="mt-1 text-sm text-[#6f85a3]">{desc}</p>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group relative flex min-h-[170px] flex-col overflow-hidden rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-xl ${border} ${hoverBorder}`}
+    >
+      <span className={`absolute inset-x-0 top-0 h-1 ${accent}`} />
+      <div className="flex items-start justify-between gap-3">
+        <div className={`grid h-12 w-12 place-items-center rounded-2xl ${bg} ring-1 ring-inset ring-white/70`}>
+          <Icon size={22} className={color} />
+        </div>
+        <ChevronRight
+          size={19}
+          className={`mt-1 text-[#6f85a3] transition group-hover:translate-x-1 ${color}`}
+        />
       </div>
+
+      <div className="mt-5">
+        <p className="text-sm font-extrabold text-[#07102f]">{title}</p>
+        <p className={`mt-2 text-3xl font-extrabold ${color}`}>{value}</p>
+        <p className="mt-2 text-sm font-semibold leading-5 text-[#6f85a3]">
+          {desc}
+        </p>
+      </div>
+    </button>
+  );
+}
+
+function PriorityAlertCard({ title, desc, count, action, tone, onClick }) {
+  const toneClass =
+    tone === "orange"
+      ? "border-orange-100 bg-orange-50 text-orange-600"
+      : tone === "green"
+        ? "border-green-100 bg-green-50 text-green-600"
+        : "border-blue-100 bg-blue-50 text-[#1e4db7]";
+
+  return (
+    <div className={`rounded-2xl border p-5 ${toneClass}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="font-extrabold">{title}</p>
+          <p className="mt-2 text-sm font-semibold leading-5 text-[#4c6280]">
+            {desc}
+          </p>
+        </div>
+        <span className="grid h-10 min-w-10 place-items-center rounded-full bg-white px-3 text-lg font-extrabold shadow-sm">
+          {count}
+        </span>
+      </div>
+
+      <button
+        type="button"
+        onClick={onClick}
+        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-[#17325c] shadow-sm transition hover:translate-x-1"
+      >
+        {action}
+        <ChevronRight size={15} />
+      </button>
     </div>
   );
 }
@@ -1070,59 +971,6 @@ function BranchRevenueTooltip({ active, payload, formatCurrency }) {
       <p className="mt-3 font-extrabold text-[#1e4db7]">
         {formatCurrency(branch.revenue)}
       </p>
-    </div>
-  );
-}
-
-function PrintDistributionChart({ data, colors, formatValue = (value) => value }) {
-  const total = data.reduce((sum, item) => sum + Number(item.value || 0), 0);
-
-  return (
-    <div className="admin-dashboard-print-chart hidden">
-      <div className="mb-5 flex h-8 overflow-hidden rounded-full bg-[#eef6fb]">
-        {data.map((item, index) => {
-          const value = Number(item.value || 0);
-          const width = total > 0 ? `${(value / total) * 100}%` : "0%";
-
-          return (
-            <div
-              key={item.name}
-              className="h-full"
-              style={{
-                width,
-                backgroundColor: colors[index % colors.length],
-              }}
-            />
-          );
-        })}
-      </div>
-
-      <div className="space-y-3">
-        {data.map((item, index) => {
-          const value = Number(item.value || 0);
-          const percent = total > 0 ? (value / total) * 100 : 0;
-
-          return (
-            <div
-              key={item.name}
-              className="flex items-center justify-between gap-4 rounded-xl bg-[#f8fcff] px-4 py-3 text-sm"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="h-3 w-3 shrink-0 rounded-full"
-                  style={{ backgroundColor: colors[index % colors.length] }}
-                />
-                <span className="truncate font-extrabold text-[#17325c]">
-                  {item.name}
-                </span>
-              </div>
-              <span className="shrink-0 font-bold text-[#6f85a3]">
-                {formatValue(value)} ({percent.toFixed(0)}%)
-              </span>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

@@ -35,6 +35,16 @@ const emptyPurchase = {
     items: [createEmptyPurchaseItem()],
 };
 
+const readArrayResponse = async (response, fallbackMessage) => {
+    const data = await response.json().catch(() => []);
+
+    if (!response.ok) {
+        throw new Error(data.message || fallbackMessage);
+    }
+
+    return Array.isArray(data) ? data : [];
+};
+
 export default function AdminPurchaseManagement() {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -99,14 +109,14 @@ export default function AdminPurchaseManagement() {
                 fetch(`${API_BASE}/admin/purchases/products-not-purchased`, { credentials: "include" }),
             ]);
 
-            setPurchases(await purchaseRes.json());
-            setSuppliers(await supplierRes.json());
-            setBranches(await branchRes.json());
-            setSupplierProducts(await supplierProductRes.json());
-            setProductsNotPurchased(await productsNotPurchasedRes.json());
+            setPurchases(await readArrayResponse(purchaseRes, "Failed to load purchases."));
+            setSuppliers(await readArrayResponse(supplierRes, "Failed to load suppliers."));
+            setBranches(await readArrayResponse(branchRes, "Failed to load branches."));
+            setSupplierProducts(await readArrayResponse(supplierProductRes, "Failed to load supplier products."));
+            setProductsNotPurchased(await readArrayResponse(productsNotPurchasedRes, "Failed to load purchase recommendations."));
         } catch (error) {
             console.error(error);
-            showToast("Failed to load purchase data.", "error");
+            showToast(error.message || "Failed to load purchase data.", "error");
         } finally {
             setLoading(false);
         }
