@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from db import get_connection
 from audit import log_audit
+from routes.auth_routes import login_required, role_required
 
 stock_transfer_bp = Blueprint("stock_transfer_bp", __name__)
 
@@ -36,6 +37,107 @@ def _get_user(cur, user_id):
         "user_id": row[0],
         "role": row[1],
         "branch_id": row[2],
+        "status": row[3],
+    }
+
+
+def _current_user_id():
+    return g.current_user["user_id"]
+
+
+def _current_role():
+    return g.current_user["role"]
+
+
+def _current_branch_id():
+    return g.current_user.get("branch_id")
+
+
+def _is_admin():
+    return _current_role() == "SYSTEM_ADMIN"
+
+
+def _current_user_record():
+    return {
+        "user_id": _current_user_id(),
+        "role": _current_role(),
+        "branch_id": _current_branch_id(),
+        "status": g.current_user.get("status", "ACTIVE"),
+    }
+
+
+def _branch_matches_current(branch_id):
+    return _to_int(branch_id) == _to_int(_current_branch_id())
+
+
+def _transfer_involves_current_branch(from_branch_id, to_branch_id):
+    return (
+        _branch_matches_current(from_branch_id)
+        or _branch_matches_current(to_branch_id)
+    )
+
+
+def _get_transfer_access(cur, transfer_id):
+    cur.execute("""
+        SELECT from_branch_id, to_branch_id, requested_by, status
+        FROM stock_transfer
+        WHERE transfer_id = %s
+    """, (transfer_id,))
+    row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "from_branch_id": row[0],
+        "to_branch_id": row[1],
+        "requested_by": row[2],
+        "status": row[3],
+    }
+
+
+def _can_view_transfer(transfer):
+    if _is_admin():
+        return True
+
+    return _transfer_involves_current_branch(
+        transfer["from_branch_id"],
+        transfer["to_branch_id"],
+    )
+
+
+def _can_mutate_pending_transfer(transfer):
+    if _is_admin():
+        return True
+
+    if _current_role() == "BRANCH_STAFF":
+        return (
+            _branch_matches_current(transfer["to_branch_id"])
+            and _to_int(transfer["requested_by"]) == _to_int(_current_user_id())
+        )
+
+    if _current_role() != "INVENTORY_MANAGER":
+        return False
+
+    return _branch_matches_current(transfer["to_branch_id"])
+
+
+def _get_transfer_access_by_detail(cur, transfer_detail_id):
+    cur.execute("""
+        SELECT st.from_branch_id, st.to_branch_id, st.requested_by, st.status
+        FROM transfer_detail td
+        JOIN stock_transfer st ON td.transfer_id = st.transfer_id
+        WHERE td.transfer_detail_id = %s
+    """, (transfer_detail_id,))
+    row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "from_branch_id": row[0],
+        "to_branch_id": row[1],
+        "requested_by": row[2],
         "status": row[3],
     }
 
@@ -219,6 +321,8 @@ def _validate_transfer_products(cur, items):
 # =========================
 @stock_transfer_bp.route("/staff/stock-transfer/request", methods=["POST"])
 @stock_transfer_bp.route("/manager/stock-transfer/request", methods=["POST"])
+@login_required
+@role_required("INVENTORY_MANAGER", "BRANCH_STAFF")
 def create_transfer_request():
     conn = None
     cur = None
@@ -226,8 +330,8 @@ def create_transfer_request():
         data = request.get_json()
 
         from_branch_id = data.get("from_branch_id")
-        to_branch_id = data.get("to_branch_id")
-        requested_by = data.get("requested_by")
+        to_branch_id = _current_branch_id()
+        requested_by = _current_user_id()
         items, item_error = _normalize_transfer_items(data)
 
         if not all([from_branch_id, to_branch_id, requested_by]):
@@ -248,7 +352,7 @@ def create_transfer_request():
         if to_branch_type != "BRANCH":
             return jsonify({"message": "Stock transfer destination must be a branch"}), 400
 
-        user = _get_user(cur, requested_by)
+        user = _current_user_record()
         allowed, message = _can_create_request(user, from_branch_id, to_branch_id)
 
         if not allowed:
@@ -312,6 +416,8 @@ def create_transfer_request():
 
 
 @stock_transfer_bp.route("/admin/stock-transfer/request", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_create_transfer_request():
     conn = None
     cur = None
@@ -320,7 +426,7 @@ def admin_create_transfer_request():
 
         from_branch_id = data.get("from_branch_id")
         to_branch_id = data.get("to_branch_id")
-        requested_by = data.get("requested_by") or data.get("admin_user_id")
+        requested_by = _current_user_id()
         items, item_error = _normalize_transfer_items(data)
 
         if not all([from_branch_id, to_branch_id, requested_by]):
@@ -332,7 +438,7 @@ def admin_create_transfer_request():
         conn = get_connection()
         cur = conn.cursor()
 
-        requester = _get_user(cur, requested_by)
+        requester = _current_user_record()
         if not _is_active_admin(requester):
             conn.rollback()
             return jsonify({"message": "Only an active system admin can arrange transfer requests"}), 403
@@ -454,11 +560,15 @@ def admin_create_transfer_request():
 # MANAGER (SOURCE) - APPROVE
 # =========================
 @stock_transfer_bp.route("/manager/stock-transfer/<int:transfer_id>/approve", methods=["PUT"])
+@login_required
+@role_required("INVENTORY_MANAGER")
 def approve_transfer(transfer_id):
     return process_transfer_approval(transfer_id, approval_scope="MANAGER")
 
 
 @stock_transfer_bp.route("/admin/stock-transfer/<int:transfer_id>/approve", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_approve_transfer(transfer_id):
     return process_transfer_approval(transfer_id, approval_scope="ADMIN")
 
@@ -467,11 +577,7 @@ def process_transfer_approval(transfer_id, approval_scope=None):
     conn = None
     cur = None
     try:
-        data = request.get_json()
-        approved_by = data.get("approved_by")
-
-        if not approved_by:
-            return jsonify({"message": "Approver is required"}), 400
+        approved_by = _current_user_id()
 
         conn = get_connection()
         cur = conn.cursor()
@@ -497,7 +603,7 @@ def process_transfer_approval(transfer_id, approval_scope=None):
             return jsonify({"message": "Transfer not found or already processed"}), 404
 
         from_branch_id, to_branch_id, from_branch_type, to_branch_type, transfer_code, status = transfer
-        approver = _get_user(cur, approved_by)
+        approver = _current_user_record()
 
         if status == STATUS_MANAGER_REVIEW:
             if approval_scope != "MANAGER":
@@ -646,11 +752,15 @@ def process_transfer_approval(transfer_id, approval_scope=None):
 # MANAGER (SOURCE) - REJECT
 # =========================
 @stock_transfer_bp.route("/manager/stock-transfer/<int:transfer_id>/reject", methods=["PUT"])
+@login_required
+@role_required("INVENTORY_MANAGER")
 def reject_transfer(transfer_id):
     return process_transfer_rejection(transfer_id)
 
 
 @stock_transfer_bp.route("/admin/stock-transfer/<int:transfer_id>/reject", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_reject_transfer(transfer_id):
     return process_transfer_rejection(transfer_id)
 
@@ -660,11 +770,8 @@ def process_transfer_rejection(transfer_id):
     cur = None
     try:
         data = request.get_json()
-        approved_by = data.get("approved_by")
+        approved_by = _current_user_id()
         reject_reason = (data.get("reject_reason") or "").strip()
-
-        if not approved_by:
-            return jsonify({"message": "Approver is required"}), 400
 
         if not reject_reason:
             return jsonify({"message": "Reject reason is required"}), 400
@@ -693,7 +800,7 @@ def process_transfer_rejection(transfer_id):
             return jsonify({"message": "Transfer not found or already processed"}), 404
 
         from_branch_id, to_branch_id, from_branch_type, to_branch_type, transfer_code, status = transfer
-        approver = _get_user(cur, approved_by)
+        approver = _current_user_record()
 
         if status == STATUS_MANAGER_REVIEW:
             if not request.path.startswith("/manager/"):
@@ -762,15 +869,13 @@ def process_transfer_rejection(transfer_id):
 # MANAGER (DESTINATION) - RECEIVE
 # =========================
 @stock_transfer_bp.route("/manager/stock-transfer/<int:transfer_id>/receive", methods=["PUT"])
+@login_required
+@role_required("INVENTORY_MANAGER")
 def receive_transfer(transfer_id):
     conn = None
     cur = None
     try:
-        data = request.get_json()
-        received_by = data.get("received_by")
-
-        if not received_by:
-            return jsonify({"message": "Receiver is required"}), 400
+        received_by = _current_user_id()
 
         conn = get_connection()
         cur = conn.cursor()
@@ -787,7 +892,7 @@ def receive_transfer(transfer_id):
             return jsonify({"message": "Transfer not ready for receiving"}), 400
 
         from_branch_id, to_branch_id, transfer_code = transfer
-        receiver = _get_user(cur, received_by)
+        receiver = _current_user_record()
         allowed, message = _can_receive_transfer(receiver, to_branch_id)
 
         if not allowed:
@@ -868,6 +973,8 @@ def receive_transfer(transfer_id):
 # VIEW TRANSFERS
 # =========================
 @stock_transfer_bp.route("/admin/stock-transfers/records", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_admin_stock_transfer_records():
     try:
         conn = get_connection()
@@ -930,6 +1037,8 @@ def get_admin_stock_transfer_records():
 
 
 @stock_transfer_bp.route("/admin/stock-transfers/<int:transfer_id>/details", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_admin_stock_transfer_details(transfer_id):
     try:
         conn = get_connection()
@@ -1018,12 +1127,20 @@ def get_admin_stock_transfer_details(transfer_id):
 
 
 @stock_transfer_bp.route("/stock-transfers", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def get_transfers():
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
+        params = []
+        branch_filter = ""
+        if not _is_admin():
+            branch_filter = "WHERE st.from_branch_id = %s OR st.to_branch_id = %s"
+            params.extend([_current_branch_id(), _current_branch_id()])
+
+        cur.execute(f"""
             SELECT st.transfer_id,
                    st.transfer_code,
                    st.from_branch_id,
@@ -1048,6 +1165,7 @@ def get_transfers():
             JOIN branch fb ON st.from_branch_id = fb.branch_id
             JOIN branch tb ON st.to_branch_id = tb.branch_id
             LEFT JOIN transfer_detail td ON st.transfer_id = td.transfer_id
+            {branch_filter}
             GROUP BY st.transfer_id,
                      st.transfer_code,
                      st.from_branch_id,
@@ -1064,7 +1182,7 @@ def get_transfers():
                      st.approved_at,
                      st.transfer_date
             ORDER BY st.transfer_id DESC
-        """)
+        """, params)
 
         rows = cur.fetchall()
 
@@ -1099,9 +1217,11 @@ def get_transfers():
 
 
 @stock_transfer_bp.route("/manager/stock-transfer/approvals", methods=["GET"])
+@login_required
+@role_required("INVENTORY_MANAGER")
 def get_manager_stock_transfer_approvals():
     try:
-        branch_id = request.args.get("branch_id")
+        branch_id = _current_branch_id()
 
         if not branch_id:
             return jsonify({"message": "Manager branch_id is required"}), 400
@@ -1175,6 +1295,8 @@ def get_manager_stock_transfer_approvals():
 # ADD TRANSFER ITEM
 # =========================
 @stock_transfer_bp.route("/stock-transfer/<int:transfer_id>/add-item", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def add_transfer_item(transfer_id):
     try:
         data = request.get_json()
@@ -1194,21 +1316,19 @@ def add_transfer_item(transfer_id):
         conn = get_connection()
         cur = conn.cursor()
 
-        # Check transfer exists and still pending
-        cur.execute("""
-            SELECT status
-            FROM stock_transfer
-            WHERE transfer_id = %s
-        """, (transfer_id,))
-
-        transfer = cur.fetchone()
+        transfer = _get_transfer_access(cur, transfer_id)
 
         if not transfer:
             cur.close()
             conn.close()
             return jsonify({"message": "Transfer not found"}), 404
 
-        if transfer[0] != "PENDING":
+        if not _can_mutate_pending_transfer(transfer):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
+
+        if transfer["status"] != "PENDING":
             cur.close()
             conn.close()
             return jsonify({"message": "Cannot add item after transfer is approved/rejected/received"}), 400
@@ -1284,10 +1404,23 @@ def add_transfer_item(transfer_id):
 # GET TRANSFER ITEMS
 # =========================
 @stock_transfer_bp.route("/stock-transfer/<int:transfer_id>/items", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def get_transfer_items(transfer_id):
     try:
         conn = get_connection()
         cur = conn.cursor()
+
+        transfer = _get_transfer_access(cur, transfer_id)
+        if not transfer:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Transfer not found"}), 404
+
+        if not _can_view_transfer(transfer):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
 
         cur.execute("""
             SELECT td.transfer_detail_id,
@@ -1337,6 +1470,8 @@ def get_transfer_items(transfer_id):
 # UPDATE TRANSFER ITEM
 # =========================
 @stock_transfer_bp.route("/stock-transfer/item/<int:transfer_detail_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def update_transfer_item(transfer_detail_id):
     try:
         data = request.get_json()
@@ -1351,22 +1486,19 @@ def update_transfer_item(transfer_detail_id):
         conn = get_connection()
         cur = conn.cursor()
 
-        # Check item exists and transfer is still pending
-        cur.execute("""
-            SELECT st.status
-            FROM transfer_detail td
-            JOIN stock_transfer st ON td.transfer_id = st.transfer_id
-            WHERE td.transfer_detail_id = %s
-        """, (transfer_detail_id,))
-
-        result = cur.fetchone()
+        result = _get_transfer_access_by_detail(cur, transfer_detail_id)
 
         if not result:
             cur.close()
             conn.close()
             return jsonify({"message": "Transfer item not found"}), 404
 
-        if result[0] != "PENDING":
+        if not _can_mutate_pending_transfer(result):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
+
+        if result["status"] != "PENDING":
             cur.close()
             conn.close()
             return jsonify({"message": "Cannot update item after transfer is approved/rejected/received"}), 400
@@ -1392,27 +1524,26 @@ def update_transfer_item(transfer_detail_id):
 # DELETE TRANSFER ITEM
 # =========================
 @stock_transfer_bp.route("/stock-transfer/item/<int:transfer_detail_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def delete_transfer_item(transfer_detail_id):
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        # Check item exists and transfer is still pending
-        cur.execute("""
-            SELECT st.status
-            FROM transfer_detail td
-            JOIN stock_transfer st ON td.transfer_id = st.transfer_id
-            WHERE td.transfer_detail_id = %s
-        """, (transfer_detail_id,))
-
-        result = cur.fetchone()
+        result = _get_transfer_access_by_detail(cur, transfer_detail_id)
 
         if not result:
             cur.close()
             conn.close()
             return jsonify({"message": "Transfer item not found"}), 404
 
-        if result[0] != "PENDING":
+        if not _can_mutate_pending_transfer(result):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
+
+        if result["status"] != "PENDING":
             cur.close()
             conn.close()
             return jsonify({"message": "Cannot delete item after transfer is approved/rejected/received"}), 400
@@ -1436,6 +1567,8 @@ def delete_transfer_item(transfer_detail_id):
 # SMART AUTO SUGGEST TRANSFER
 # =========================
 @stock_transfer_bp.route("/manager/stock-transfer/auto-suggest", methods=["POST"])
+@login_required
+@role_required("INVENTORY_MANAGER")
 def auto_suggest_transfer():
     conn = None
     cur = None
@@ -1443,10 +1576,10 @@ def auto_suggest_transfer():
         data = request.get_json()
 
         product_id = data.get("product_id")
-        to_branch_id = data.get("to_branch_id")
+        to_branch_id = _current_branch_id()
         requested_from_branch_id = data.get("from_branch_id")
         requested_quantity = data.get("quantity")
-        requested_by = data.get("requested_by")
+        requested_by = _current_user_id()
 
         if product_id is None:
             return jsonify({"message": "Product is required"}), 400
@@ -1454,14 +1587,11 @@ def auto_suggest_transfer():
         if to_branch_id is None:
             return jsonify({"message": "Destination branch is required"}), 400
 
-        if requested_by is None:
-            return jsonify({"message": "Requested by is required"}), 400
-
         conn = get_connection()
         cur = conn.cursor()
         _ensure_branch_status_column(cur)
 
-        requester = _get_user(cur, requested_by)
+        requester = _current_user_record()
 
         if not requester or requester["status"] != "ACTIVE":
             return jsonify({"message": "Requesting user not found or inactive"}), 403

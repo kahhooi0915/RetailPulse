@@ -1,25 +1,9 @@
 from flask import Blueprint, jsonify, request
 
 from db import get_connection
+from routes.auth_routes import login_required, role_required
 
 audit_bp = Blueprint("audit_bp", __name__)
-
-
-def _is_system_admin(cur, user_id):
-    if not user_id:
-        return False
-
-    cur.execute(
-        """
-        SELECT 1
-        FROM users
-        WHERE user_id = %s
-          AND role = 'SYSTEM_ADMIN'
-          AND status = 'ACTIVE'
-        """,
-        (user_id,),
-    )
-    return cur.fetchone() is not None
 
 
 def _audit_row(row):
@@ -37,17 +21,15 @@ def _audit_row(row):
 
 
 @audit_bp.route("/admin/audit-logs", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def get_audit_logs():
     conn = None
     cur = None
 
     try:
-        requester_id = request.args.get("user_id") or request.headers.get("X-User-Id")
         conn = get_connection()
         cur = conn.cursor()
-
-        if not _is_system_admin(cur, requester_id):
-            return jsonify({"message": "Only system admins can view audit logs"}), 403
 
         module = request.args.get("module")
         action = request.args.get("action")

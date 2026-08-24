@@ -65,7 +65,7 @@ export default function DatabaseBackupPage() {
 
         try {
             setLoading(true);
-            const res = await fetch(`${API_BASE}/admin/backups?user_id=${user.user_id}`);
+            const res = await fetch(`${API_BASE}/admin/backups?user_id=${user.user_id}`, { credentials: "include" });
             const data = await res.json();
             if (!res.ok) {
                 throw new Error(data.message || "Failed to load backups.");
@@ -88,7 +88,6 @@ export default function DatabaseBackupPage() {
             return;
         }
 
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         loadBackups();
     }, [loadBackups, navigate, user]);
 
@@ -98,6 +97,7 @@ export default function DatabaseBackupPage() {
             setAlert(null);
             const res = await fetch(`${API_BASE}/admin/backups/create`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ user_id: user.user_id }),
             });
@@ -129,6 +129,7 @@ export default function DatabaseBackupPage() {
             setAlert(null);
             const res = await fetch(`${API_BASE}/admin/backups/verify`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ user_id: user.user_id, filename: selectedBackup }),
             });
@@ -164,6 +165,7 @@ export default function DatabaseBackupPage() {
             setAlert(null);
             const res = await fetch(`${API_BASE}/admin/backups/restore`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     user_id: user.user_id,
@@ -200,7 +202,8 @@ export default function DatabaseBackupPage() {
     const downloadBackup = async (filename) => {
         try {
             const res = await fetch(
-                `${API_BASE}/admin/backups/download/${encodeURIComponent(filename)}?user_id=${user.user_id}`
+                `${API_BASE}/admin/backups/download/${encodeURIComponent(filename)}?user_id=${user.user_id}`,
+                { credentials: "include" }
             );
             if (!res.ok) {
                 const data = await res.json();
@@ -235,7 +238,7 @@ export default function DatabaseBackupPage() {
             setAlert(null);
             const res = await fetch(
                 `${API_BASE}/admin/backups/${encodeURIComponent(filename)}?user_id=${user.user_id}`,
-                { method: "DELETE" }
+                { method: "DELETE", credentials: "include" }
             );
             const data = await res.json();
             if (!res.ok) {

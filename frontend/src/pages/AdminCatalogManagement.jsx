@@ -1,5 +1,5 @@
 import DashboardLayout from "../layouts/DashboardLayout";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Boxes,
@@ -155,9 +155,9 @@ export default function AdminCatalogManagement() {
             setLoading(true);
 
             const [categoryRes, productRes, supplierRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/categories`),
-                fetch(`${API_BASE}/admin/products`),
-                fetch(`${API_BASE}/admin/suppliers`),
+                fetch(`${API_BASE}/admin/categories`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/suppliers`, { credentials: "include" }),
             ]);
 
             const categoryData = await categoryRes.json();
@@ -314,6 +314,7 @@ export default function AdminCatalogManagement() {
 
             const res = await fetch(url, {
                 method,
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(categoryForm),
             });
@@ -401,6 +402,7 @@ export default function AdminCatalogManagement() {
 
             const res = await fetch(url, {
                 method,
+                credentials: "include",
                 body: formData,
             });
 
@@ -429,6 +431,7 @@ export default function AdminCatalogManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/categories/${category.category_id}`, {
                 method: "DELETE",
+                credentials: "include",
             });
 
             const data = await res.json();
@@ -456,6 +459,7 @@ export default function AdminCatalogManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/products/${product.product_id}/${nextAction}`, {
                 method: "PUT",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_user_id: user.user_id }),
             });

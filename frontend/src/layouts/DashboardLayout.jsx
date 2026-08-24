@@ -7,6 +7,7 @@ import {
     Settings,
 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
+import api from "../api/axios";
 
 export default function DashboardLayout({
     user,
@@ -25,10 +26,15 @@ export default function DashboardLayout({
     const navigate = useNavigate();
     const [showUserMenu, setShowUserMenu] = useState(false);
 
-    const logout = () => {
-        sessionStorage.removeItem("user");
-        sessionStorage.removeItem("user");
-        navigate("/");
+    const logout = async () => {
+        try {
+            await api.post("/logout");
+            sessionStorage.removeItem("user");
+            navigate("/");
+        } catch (error) {
+            console.error(error);
+            alert("Logout failed. Please try again.");
+        }
     };
 
     return (

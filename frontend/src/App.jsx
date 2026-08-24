@@ -43,6 +43,8 @@ function AppContent() {
         <Route path="/staff" element={<Staff />} />
         <Route path="/manager" element={<Manager />} />
         <Route path="/staff-analytics" element={<StaffAnalytics />} />
+        <Route path="/staff/analytics" element={<StaffAnalytics />} />
+        <Route path="/staff/request-stock" element={<StaffAnalytics />} />
         <Route path="/user-profile" element={<UserProfile />} />
         <Route path="/manager-stock-transfer" element={<ManagerStockTransfer />} />
         <Route path="/manager-dashboard" element={<ManagerDashboard />} />

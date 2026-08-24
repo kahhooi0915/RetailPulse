@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from routes.auth_routes import login_required, role_required
 
 branch_bp = Blueprint("branch_bp", __name__)
 
@@ -15,6 +16,8 @@ def ensure_branch_status_column(cur):
 # ADMIN - GET ALL BRANCHES
 # =========================
 @branch_bp.route("/admin/branches", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_branches():
     try:
         conn = get_connection()
@@ -56,6 +59,8 @@ def admin_get_branches():
 # ADMIN - GET SINGLE BRANCH
 # =========================
 @branch_bp.route("/admin/branches/<int:branch_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_single_branch(branch_id):
     try:
         conn = get_connection()
@@ -98,6 +103,8 @@ def admin_get_single_branch(branch_id):
 # ADMIN - ADD BRANCH
 # =========================
 @branch_bp.route("/admin/branches", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_add_branch():
     conn = None
     cur = None
@@ -174,6 +181,8 @@ def admin_add_branch():
 # ADMIN - UPDATE BRANCH
 # =========================
 @branch_bp.route("/admin/branches/<int:branch_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_update_branch(branch_id):
     try:
         data = request.get_json()
@@ -228,6 +237,8 @@ def admin_update_branch(branch_id):
 # ADMIN - INACTIVATE BRANCH
 # =========================
 @branch_bp.route("/admin/branches/<int:branch_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_inactivate_branch(branch_id):
     try:
         conn = get_connection()

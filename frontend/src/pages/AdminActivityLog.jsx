@@ -46,7 +46,7 @@ export default function AdminActivityLog() {
     const loadLogs = async () => {
         try {
             setLoading(true);
-            const res = await fetch(`${API_BASE}/admin/audit-logs?${queryString}`);
+            const res = await fetch(`${API_BASE}/admin/audit-logs?${queryString}`, { credentials: "include" });
             const data = await res.json();
             setLogs(Array.isArray(data) ? data : []);
         } catch (error) {
@@ -58,7 +58,7 @@ export default function AdminActivityLog() {
     };
 
     const loadUsers = async () => {
-        const res = await fetch(`${API_BASE}/admin/users`);
+        const res = await fetch(`${API_BASE}/admin/users`, { credentials: "include" });
         const data = await res.json();
         setUsers(Array.isArray(data) ? data : []);
     };

@@ -19,12 +19,18 @@ def _env_list(name, default):
 
 
 class Config:
+    SECRET_KEY = os.getenv("SECRET_KEY", "retailpulse-dev-secret-key")
     DB_HOST = os.getenv("DB_HOST", "localhost")
     DB_NAME = os.getenv("DB_NAME", "retailpulse")
     DB_USER = os.getenv("DB_USER", "postgres")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "1234")
     DB_PORT = os.getenv("DB_PORT", "5432")
     FLASK_DEBUG = _env_bool("FLASK_DEBUG", default=True)
+    SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "retailpulse_session")
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+    SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", default=False)
+    SESSION_LIFETIME_SECONDS = int(os.getenv("SESSION_LIFETIME_SECONDS", "86400"))
     CORS_ORIGINS = _env_list(
         "CORS_ORIGINS",
         [

@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -15,6 +14,7 @@ import {
     XCircle,
 } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import StockTransferTimeline from "../components/StockTransferTimeline";
 
 const API = "http://localhost:5000";
 const ROWS_PER_PAGE = 8;
@@ -66,6 +66,7 @@ export default function AdminWarehouseManagement() {
 
     const fetchJson = async (path, options) => {
         const res = await fetch(`${API}${path}`, {
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             ...options,
         });
@@ -285,6 +286,7 @@ export default function AdminWarehouseManagement() {
 
             const res = await fetch(`${API}/admin/stock-transfer/${transfer.transfer_id}/approve`, {
                 method: "PUT",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -321,6 +323,7 @@ export default function AdminWarehouseManagement() {
 
             const res = await fetch(`${API}/admin/stock-transfer/${rejectTransfer.transfer_id}/reject`, {
                 method: "PUT",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -976,6 +979,8 @@ function TransferDetailsModal({ transfer, onClose }) {
                             <InfoItem label="Reject Reason" value={transfer.reject_reason || "-"} />
                         </InfoGroup>
                     </div>
+
+                    <StockTransferTimeline transfer={transfer} formatDateTime={formatDateTime} />
 
                     <div className="rounded-2xl bg-[#f8fcff] p-5">
                         <h3 className="mb-4 text-lg font-extrabold text-[#07102f]">

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Children, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Bell,
@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ManagerSidebar from "../components/ManagerSidebar";
+import StockTransferTimeline from "../components/StockTransferTimeline";
+import api from "../api/axios";
 
 const API_BASE = "http://localhost:5000";
 const REQUEST_TIMEOUT_MS = 10000;
@@ -29,6 +31,7 @@ async function fetchJsonWithTimeout(url, options = {}) {
     try {
         const res = await fetch(url, {
             ...options,
+            credentials: "include",
             signal: controller.signal,
         });
         const data = await res.json().catch(() => null);
@@ -266,6 +269,7 @@ export default function ManagerStockTransfer() {
 
             const transferRes = await fetch(`${API_BASE}/manager/stock-transfer/request`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     from_branch_id: Number(form.from_branch_id),
@@ -327,6 +331,7 @@ export default function ManagerStockTransfer() {
                 `${API_BASE}/manager/stock-transfer/${transferId}/approve`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         approved_by: Number(user.user_id),
@@ -362,6 +367,7 @@ export default function ManagerStockTransfer() {
                 `${API_BASE}/manager/stock-transfer/${rejectTarget.transfer_id}/reject`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         approved_by: Number(user.user_id),
@@ -395,6 +401,7 @@ export default function ManagerStockTransfer() {
                 `${API_BASE}/manager/stock-transfer/${transferId}/receive`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         received_by: Number(user.user_id),
@@ -468,9 +475,15 @@ export default function ManagerStockTransfer() {
         }, 250);
     };
 
-    const logout = () => {
-        sessionStorage.removeItem("user");
-        navigate("/");
+    const logout = async () => {
+        try {
+            await api.post("/logout");
+            sessionStorage.removeItem("user");
+            navigate("/");
+        } catch (error) {
+            console.error(error);
+            alert("Logout failed. Please try again.");
+        }
     };
 
     if (loading) {
@@ -1004,7 +1017,7 @@ function SelectInput({ label, value, onChange, children }) {
 }
 
 function TransferSection({ title, desc, badge, empty, children }) {
-    const childArray = React.Children.toArray(children);
+    const childArray = Children.toArray(children);
 
     return (
         <section className="mb-6 rounded-2xl bg-white p-6 shadow-sm">
@@ -1245,6 +1258,10 @@ function TransferDetailsModal({ transfer, items, getBranchName, onClose }) {
                     <InfoBlock label="Requested Time" value={formatDateTime(transfer.transfer_date)} />
                     <InfoBlock label="Decision Time" value={formatDateTime(transfer.approved_at)} />
                     <InfoBlock label="Reject Reason" value={transfer.status === "REJECTED" ? transfer.reject_reason || "-" : "-"} />
+                </div>
+
+                <div className="mt-5">
+                    <StockTransferTimeline transfer={transfer} formatDateTime={formatDateTime} />
                 </div>
 
                 <div className="mt-5 rounded-2xl bg-[#f8fcff] p-4">

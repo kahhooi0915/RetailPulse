@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+from routes.auth_routes import login_required, role_required
 
 category_bp = Blueprint("category_bp", __name__)
 
@@ -8,6 +9,8 @@ category_bp = Blueprint("category_bp", __name__)
 # ADMIN - GET ALL CATEGORIES
 # =========================
 @category_bp.route("/admin/categories", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_categories():
     try:
         conn = get_connection()
@@ -44,6 +47,8 @@ def admin_get_categories():
 # ADMIN - GET SINGLE CATEGORY
 # =========================
 @category_bp.route("/admin/categories/<int:category_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_single_category(category_id):
     try:
         conn = get_connection()
@@ -81,6 +86,8 @@ def admin_get_single_category(category_id):
 # ADMIN - ADD CATEGORY
 # =========================
 @category_bp.route("/admin/categories", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_add_category():
     try:
         data = request.get_json()
@@ -134,6 +141,8 @@ def admin_add_category():
 # ADMIN - UPDATE CATEGORY
 # =========================
 @category_bp.route("/admin/categories/<int:category_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_update_category(category_id):
     try:
         data = request.get_json()
@@ -189,6 +198,8 @@ def admin_update_category(category_id):
 # ADMIN - DELETE CATEGORY
 # =========================
 @category_bp.route("/admin/categories/<int:category_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_delete_category(category_id):
     try:
         conn = get_connection()

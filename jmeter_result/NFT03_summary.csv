@@ -1,0 +1,4 @@
+Label,# Samples,Average,Min,Max,Std. Dev.,Error %,Throughput,Received KB/sec,Sent KB/sec,Avg. Bytes
+Backend Root Availability,50,3382,160,14275,3284.55,0.000%,1.11877,0.32,0.16,297.0
+Login Availability,50,5061,2354,16362,3940.13,0.000%,1.04006,0.62,0.24,606.0
+TOTAL,100,4222,160,16362,3723.05,0.000%,2.07305,0.91,0.39,451.5

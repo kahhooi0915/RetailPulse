@@ -6,9 +6,10 @@ import urllib.error
 import urllib.request
 from decimal import Decimal
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from db import get_connection
+from routes.auth_routes import login_required, role_required
 from services.forecast_service import get_forecast_summary
 
 ai_bp = Blueprint("ai_bp", __name__)
@@ -38,6 +39,19 @@ def _close(conn=None, cur=None):
         cur.close()
     if conn:
         conn.close()
+
+
+def _current_scope():
+    role = g.current_user["role"]
+    return {
+        "role": role,
+        "branch_id": None if role == "SYSTEM_ADMIN" else g.current_user.get("branch_id"),
+        "user_id": g.current_user["user_id"],
+    }
+
+
+def _is_scoped(scope):
+    return bool(scope and scope.get("branch_id") is not None)
 
 
 def _debug_ai_logs_enabled():
@@ -164,7 +178,34 @@ def _branch_matches_question(branch_name, question_text):
     )
 
 
-def _fetch_matching_branch(question):
+def _fetch_branch_by_id(branch_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT branch_id, branch_name, branch_code
+            FROM branch
+            WHERE branch_id = %s
+        """, (branch_id,))
+        row = cur.fetchone()
+    finally:
+        _close(conn, cur)
+
+    if not row:
+        return None
+
+    return {
+        "branch_id": row[0],
+        "branch_name": row[1],
+        "branch_code": row[2],
+    }
+
+
+def _fetch_matching_branch(question, scope=None):
+    if _is_scoped(scope):
+        return _fetch_branch_by_id(scope["branch_id"])
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -188,8 +229,8 @@ def _fetch_matching_branch(question):
     return None
 
 
-def _fetch_conditional_top_seller(question):
-    branch = _fetch_matching_branch(question)
+def _fetch_conditional_top_seller(question, scope=None):
+    branch = _fetch_matching_branch(question, scope)
     time_filter = _extract_time_filter(question)
 
     missing_filters = []
@@ -261,13 +302,30 @@ def _fetch_conditional_top_seller(question):
     }
 
 
-def _fetch_inventory_rows(intent):
+def _fetch_inventory_rows(intent, scope=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    where_clause = ""
+    conditions = []
+    params = []
+    summary_conditions = []
+    summary_params = []
+
+    if _is_scoped(scope):
+        conditions.append("i.branch_id = %s")
+        params.append(scope["branch_id"])
+        summary_conditions.append("i.branch_id = %s")
+        summary_params.append(scope["branch_id"])
+
     if intent in ("low_stock_product", "reorder_suggestion"):
-        where_clause = "WHERE i.quantity_in_stock <= COALESCE(p.reorder_level, 0)"
+        conditions.append("i.quantity_in_stock <= COALESCE(p.reorder_level, 0)")
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    summary_where_clause = (
+        f"WHERE {' AND '.join(summary_conditions)}"
+        if summary_conditions
+        else ""
+    )
 
     cur.execute(f"""
         SELECT
@@ -283,7 +341,7 @@ def _fetch_inventory_rows(intent):
         {where_clause}
         ORDER BY i.quantity_in_stock ASC, p.product_name
         LIMIT 15
-    """)
+    """, params)
 
     rows = cur.fetchall()
 
@@ -295,7 +353,8 @@ def _fetch_inventory_rows(intent):
             COUNT(*) FILTER (WHERE i.quantity_in_stock = 0) AS out_of_stock_rows
         FROM inventory i
         JOIN product p ON i.product_id = p.product_id
-    """)
+        {summary_where_clause}
+    """, summary_params)
     summary_row = cur.fetchone()
 
     _close(conn, cur)
@@ -322,11 +381,17 @@ def _fetch_inventory_rows(intent):
     }
 
 
-def _fetch_sales_summary():
+def _fetch_sales_summary(scope=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    sale_filter = ""
+    sale_params = []
+    if _is_scoped(scope):
+        sale_filter = "WHERE s.branch_id = %s"
+        sale_params.append(scope["branch_id"])
+
+    cur.execute(f"""
         SELECT
             COUNT(DISTINCT s.sale_id),
             COALESCE(SUM(sd.quantity), 0),
@@ -335,23 +400,26 @@ def _fetch_sales_summary():
             MAX(s.sale_date)
         FROM sale s
         LEFT JOIN sale_detail sd ON s.sale_id = sd.sale_id
-    """)
+        {sale_filter}
+    """, sale_params)
     summary = cur.fetchone()
 
-    cur.execute("""
+    cur.execute(f"""
         SELECT
             p.product_name,
             COALESCE(SUM(sd.quantity), 0) AS units_sold,
             COALESCE(SUM(sd.subtotal), 0) AS revenue
         FROM sale_detail sd
+        JOIN sale s ON sd.sale_id = s.sale_id
         JOIN product p ON sd.product_id = p.product_id
+        {sale_filter}
         GROUP BY p.product_id, p.product_name
         ORDER BY revenue DESC, units_sold DESC
         LIMIT 5
-    """)
+    """, sale_params)
     top_products = cur.fetchall()
 
-    cur.execute("""
+    cur.execute(f"""
         SELECT
             b.branch_name,
             COUNT(DISTINCT s.sale_id) AS sales_count,
@@ -359,10 +427,11 @@ def _fetch_sales_summary():
         FROM sale s
         JOIN branch b ON s.branch_id = b.branch_id
         LEFT JOIN sale_detail sd ON s.sale_id = sd.sale_id
+        {sale_filter}
         GROUP BY b.branch_id, b.branch_name
         ORDER BY revenue DESC
         LIMIT 5
-    """)
+    """, sale_params)
     branch_rows = cur.fetchall()
 
     _close(conn, cur)
@@ -395,16 +464,24 @@ def _fetch_sales_summary():
     }
 
 
-def _fetch_poor_selling_products():
+def _fetch_poor_selling_products(scope=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    params = []
+    branch_quantity = "COALESCE(SUM(sd.quantity), 0)"
+    branch_revenue = "COALESCE(SUM(sd.subtotal), 0)"
+    if _is_scoped(scope):
+        branch_quantity = "COALESCE(SUM(sd.quantity) FILTER (WHERE s.branch_id = %s), 0)"
+        branch_revenue = "COALESCE(SUM(sd.subtotal) FILTER (WHERE s.branch_id = %s), 0)"
+        params.extend([scope["branch_id"], scope["branch_id"]])
+
+    cur.execute(f"""
         SELECT
             p.product_code,
             p.product_name,
-            COALESCE(SUM(sd.quantity), 0) AS units_sold,
-            COALESCE(SUM(sd.subtotal), 0) AS revenue
+            {branch_quantity} AS units_sold,
+            {branch_revenue} AS revenue
         FROM product p
         LEFT JOIN sale_detail sd ON p.product_id = sd.product_id
         LEFT JOIN sale s ON sd.sale_id = s.sale_id
@@ -412,7 +489,7 @@ def _fetch_poor_selling_products():
         GROUP BY p.product_id, p.product_code, p.product_name
         ORDER BY units_sold ASC, revenue ASC, p.product_name
         LIMIT 10
-    """)
+    """, params)
 
     rows = cur.fetchall()
     _close(conn, cur)
@@ -432,11 +509,17 @@ def _fetch_poor_selling_products():
     }
 
 
-def _fetch_branch_attention_summary():
+def _fetch_branch_attention_summary(scope=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    branch_filter = ""
+    params = []
+    if _is_scoped(scope):
+        branch_filter = "WHERE b.branch_id = %s"
+        params.append(scope["branch_id"])
+
+    cur.execute(f"""
         WITH inventory_summary AS (
             SELECT
                 i.branch_id,
@@ -472,9 +555,10 @@ def _fetch_branch_attention_summary():
         FROM branch b
         LEFT JOIN inventory_summary i ON b.branch_id = i.branch_id
         LEFT JOIN sales_summary s ON b.branch_id = s.branch_id
+        {branch_filter}
         ORDER BY low_stock_items DESC, out_of_stock_items DESC, sales_revenue ASC
         LIMIT 8
-    """)
+    """, params)
 
     rows = cur.fetchall()
     _close(conn, cur)
@@ -498,11 +582,11 @@ def _fetch_branch_attention_summary():
     }
 
 
-def _build_data_context(intent, message=None):
+def _build_data_context(intent, message=None, scope=None):
     if intent == "conditional_top_seller":
-        return _fetch_conditional_top_seller(message or "")
+        return _fetch_conditional_top_seller(message or "", scope)
     if intent == "top_seller_forecast":
-        forecast_summary = get_forecast_summary()
+        forecast_summary = get_forecast_summary(branch_id=scope.get("branch_id") if _is_scoped(scope) else None)
         official_summary = {
             "intent": "top_seller_forecast",
             "ranking_basis": "total_forecast_units",
@@ -519,17 +603,17 @@ def _build_data_context(intent, message=None):
             print("Official forecast summary sent to AI:", official_summary)
         return official_summary
     if intent == "poor_selling_product":
-        return _fetch_poor_selling_products()
+        return _fetch_poor_selling_products(scope)
     if intent in ("low_stock_product", "reorder_suggestion", "inventory_summary"):
-        return _fetch_inventory_rows(intent)
+        return _fetch_inventory_rows(intent, scope)
     if intent == "sales_summary":
-        return _fetch_sales_summary()
+        return _fetch_sales_summary(scope)
     if intent == "branch_attention":
-        return _fetch_branch_attention_summary()
+        return _fetch_branch_attention_summary(scope)
     return None
 
 
-def _ask_gemini(message, intent, context):
+def _ask_gemini(message, intent, context, scope=None):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not configured")
@@ -540,6 +624,9 @@ def _ask_gemini(message, intent, context):
         "Do not guess missing business facts. If business data is insufficient, say so. "
         "For business questions, your role is to explain and recommend only. Never insert, update, "
         "delete, approve, reject, or modify database data, and never claim that you performed an action. "
+        "Respect the authenticated user's authorization scope. If a user asks about another branch but "
+        "the supplied backend data only covers their authorized branch, answer only from the supplied data "
+        "and do not infer or reveal other branch information. "
         "When discussing forecasts generated by Prophet, refer to Prophet as a forecasting approach, "
         "technique, or method, and avoid model terminology for Prophet. "
         "Keep the response concise, practical, and grounded in the available facts."
@@ -549,6 +636,15 @@ def _ask_gemini(message, intent, context):
         "user_question": message,
         "detected_intent": intent,
         "backend_data_summary": context,
+        "authorized_data_scope": {
+            "role": scope.get("role") if scope else None,
+            "branch_id": scope.get("branch_id") if scope else None,
+            "scope_description": (
+                "system-wide"
+                if not _is_scoped(scope)
+                else "authenticated user's branch only"
+            ),
+        },
         "instruction": (
             "If backend_data_summary is null, answer the general question normally. "
             "If backend_data_summary is provided, explain the result and give practical recommendations "
@@ -792,6 +888,8 @@ def _format_fallback_answer(intent, context):
 
 
 @ai_bp.route("/api/ai/chat", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def ai_chat():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or data.get("message") or "").strip()
@@ -800,11 +898,15 @@ def ai_chat():
         return jsonify({"answer": "Question is required"}), 400
 
     intent = _detect_intent(question)
-    print(f"AI question received: intent={intent}, length={len(question)}")
+    scope = _current_scope()
+    print(
+        "AI question received: "
+        f"intent={intent}, length={len(question)}, role={scope['role']}, branch_id={scope['branch_id']}"
+    )
 
     try:
         try:
-            context = _build_data_context(intent, question)
+            context = _build_data_context(intent, question, scope)
         except Exception as e:
             print("ERROR /api/ai/chat data context type:", type(e).__name__)
             print("ERROR /api/ai/chat data context message:", str(e))
@@ -815,7 +917,7 @@ def ai_chat():
                 "data_available": False,
             }
         try:
-            answer = _ask_gemini(question, intent, context)
+            answer = _ask_gemini(question, intent, context, scope)
         except (RuntimeError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
             print("ERROR Gemini API caught type:", type(e).__name__)
             print("ERROR Gemini API caught message:", str(e))

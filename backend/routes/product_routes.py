@@ -1,9 +1,10 @@
 import json
 
 import psycopg2
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from db import get_connection
-from audit import get_actor_user_id, log_audit, set_audit_context
+from audit import log_audit, set_audit_context
+from routes.auth_routes import login_required, role_required
 
 product_bp = Blueprint("product_bp", __name__)
 DEFAULT_PRODUCT_IMAGE_URL = "/static/images/products/default.webp"
@@ -230,6 +231,8 @@ def get_product_suppliers(cur, product_id):
     } for row in cur.fetchall()]
 
 @product_bp.route("/admin/products", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_products():
     try:
         available_only = request.args.get("available") in ["1", "true", "TRUE", "yes"]
@@ -291,6 +294,8 @@ def admin_get_products():
 
 
 @product_bp.route("/admin/products/<int:product_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_single_product(product_id):
     try:
         conn = get_connection()
@@ -345,13 +350,15 @@ def admin_get_single_product(product_id):
 
 
 @product_bp.route("/admin/products", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_add_product():
     conn = None
     cur = None
 
     try:
         payload = request.get_json(silent=True) if request.is_json else request.form
-        actor_user_id = get_actor_user_id(payload)
+        actor_user_id = g.current_user["user_id"]
         product_name = payload.get("product_name")
         category_id = payload.get("category_id")
         selling_price = payload.get("selling_price")
@@ -361,9 +368,6 @@ def admin_add_product():
         description = payload.get("description")
         image_file = request.files.get("product_image") if not request.is_json else None
         suppliers = parse_supplier_mappings()
-
-        if not actor_user_id:
-            return jsonify({"message": "Actor user id is required for audit logging"}), 400
 
         if not product_name or not product_name.strip():
             return jsonify({"message": "Product name is required"}), 400
@@ -492,13 +496,15 @@ def admin_add_product():
 
 
 @product_bp.route("/admin/products/<int:product_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_update_product(product_id):
     conn = None
     cur = None
 
     try:
         payload = request.get_json(silent=True) if request.is_json else request.form
-        actor_user_id = get_actor_user_id(payload)
+        actor_user_id = g.current_user["user_id"]
         product_name = payload.get("product_name")
         category_id = payload.get("category_id")
         selling_price = payload.get("selling_price")
@@ -508,9 +514,6 @@ def admin_update_product(product_id):
         description = payload.get("description")
         image_file = request.files.get("product_image") if not request.is_json else None
         suppliers = parse_supplier_mappings()
-
-        if not actor_user_id:
-            return jsonify({"message": "Actor user id is required for audit logging"}), 400
 
         if not product_name or not product_name.strip():
             return jsonify({"message": "Product name is required"}), 400
@@ -649,6 +652,8 @@ def admin_update_product(product_id):
 
 
 @product_bp.route("/admin/products/<int:product_id>/image", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_product_image(product_id):
     try:
         conn = get_connection()
@@ -677,13 +682,12 @@ def admin_get_product_image(product_id):
         return jsonify({"message": str(e)}), 500
 
 
-def update_product_status(product_id, status, actor_user_id):
+def update_product_status(product_id, status):
     conn = None
     cur = None
 
     try:
-        if not actor_user_id:
-            return jsonify({"message": "Actor user id is required for audit logging"}), 400
+        actor_user_id = g.current_user["user_id"]
 
         conn = get_connection()
         cur = conn.cursor()
@@ -730,25 +734,25 @@ def update_product_status(product_id, status, actor_user_id):
 
 
 @product_bp.route("/admin/products/<int:product_id>/deactivate", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_deactivate_product(product_id):
-    data = request.get_json(silent=True) or {}
-    return update_product_status(product_id, "INACTIVE", get_actor_user_id(data))
+    return update_product_status(product_id, "INACTIVE")
 
 
 @product_bp.route("/admin/products/<int:product_id>/activate", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_activate_product(product_id):
-    data = request.get_json(silent=True) or {}
-    return update_product_status(product_id, "ACTIVE", get_actor_user_id(data))
+    return update_product_status(product_id, "ACTIVE")
 
 
 @product_bp.route("/admin/products/<int:product_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_delete_product(product_id):
     try:
-        data = request.get_json(silent=True) or {}
-        actor_user_id = get_actor_user_id(data)
-
-        if not actor_user_id:
-            return jsonify({"message": "Actor user id is required for audit logging"}), 400
+        actor_user_id = g.current_user["user_id"]
 
         conn = get_connection()
         cur = conn.cursor()
@@ -786,17 +790,16 @@ def admin_delete_product(product_id):
 # ADMIN - UPDATE PRODUCT REORDER LEVEL
 # =========================
 @product_bp.route("/admin/products/<int:product_id>/reorder-level", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_update_product_reorder_level(product_id):
     conn = None
     cur = None
 
     try:
-        data = request.get_json()
-        actor_user_id = get_actor_user_id(data)
+        data = request.get_json() or {}
+        actor_user_id = g.current_user["user_id"]
         reorder_level = data.get("reorder_level")
-
-        if not actor_user_id:
-            return jsonify({"message": "Actor user id is required for audit logging"}), 400
 
         reorder_level = parse_non_negative_int(reorder_level, "Reorder level")
 

@@ -99,8 +99,14 @@ def _print_product_debug(
     print("================================")
 
 
-def get_forecast_summary(debug=False):
+def get_forecast_summary(debug=False, branch_id=None):
     conn = get_connection()
+
+    branch_filter = ""
+    params = None
+    if branch_id is not None:
+        branch_filter = "WHERE s.branch_id = %s"
+        params = [branch_id]
 
     query = """
         SELECT
@@ -114,6 +120,7 @@ def get_forecast_summary(debug=False):
         FROM sale_detail sd
         JOIN sale s ON sd.sale_id = s.sale_id
         JOIN product p ON sd.product_id = p.product_id
+        {branch_filter}
         GROUP BY
             p.product_id,
             p.product_code,
@@ -121,10 +128,10 @@ def get_forecast_summary(debug=False):
             p.selling_price,
             DATE_TRUNC('month', s.sale_date)
         ORDER BY p.product_id, sale_month;
-    """
+    """.format(branch_filter=branch_filter)
 
     try:
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn, params=params)
     finally:
         conn.close()
 

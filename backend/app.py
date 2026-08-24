@@ -21,7 +21,8 @@ from routes.backup_routes import backup_bp
 
 def create_app():
     app = Flask(__name__)
-    CORS(app, origins=Config.CORS_ORIGINS)
+    app.config.from_object(Config)
+    CORS(app, origins=Config.CORS_ORIGINS, supports_credentials=True)
 
     @app.route("/")
     def home():

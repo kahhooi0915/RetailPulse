@@ -3,9 +3,10 @@ import os
 import re
 import smtplib
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from db import get_connection
 from audit import log_audit
+from routes.auth_routes import login_required, role_required
 
 sales_bp = Blueprint("sales_bp", __name__)
 EMAIL_PATTERN = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
@@ -25,6 +26,32 @@ def _to_float(value):
 
 def _format_money(value):
     return f"RM {float(value or 0):,.2f}"
+
+
+def _current_user_id():
+    return g.current_user["user_id"]
+
+
+def _current_role():
+    return g.current_user["role"]
+
+
+def _current_branch_id():
+    return g.current_user.get("branch_id")
+
+
+def _is_admin():
+    return _current_role() == "SYSTEM_ADMIN"
+
+
+def _can_access_branch(branch_id):
+    return _is_admin() or int(branch_id) == int(_current_branch_id())
+
+
+def _sale_branch(cur, sale_id):
+    cur.execute("SELECT branch_id FROM sale WHERE sale_id = %s", (sale_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 def _build_receipt_email(receipt):
@@ -94,6 +121,8 @@ def send_receipt_email(recipient_email, receipt):
 
 
 @sales_bp.route("/staff/email-receipt", methods=["POST"])
+@login_required
+@role_required("BRANCH_STAFF")
 def staff_email_receipt():
     try:
         data = request.get_json() or {}
@@ -124,6 +153,8 @@ def staff_email_receipt():
 # ADMIN - GET ALL SALES
 # =========================
 @sales_bp.route("/admin/sales", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_sales():
     try:
         conn = get_connection()
@@ -131,7 +162,13 @@ def admin_get_sales():
         ensure_sale_discount_columns(cur)
         conn.commit()
 
-        cur.execute("""
+        params = []
+        branch_filter = ""
+        if not _is_admin():
+            branch_filter = "AND s.branch_id = %s"
+            params.append(_current_branch_id())
+
+        cur.execute(f"""
             SELECT s.sale_id, s.sale_code, s.user_id, u.name,
                    s.branch_id, b.branch_name, b.branch_code, b.branch_type,
                    s.sale_date, s.total_amount, s.payment_method,
@@ -140,8 +177,9 @@ def admin_get_sales():
             JOIN users u ON s.user_id = u.user_id
             JOIN branch b ON s.branch_id = b.branch_id
             WHERE b.branch_type = 'BRANCH'
+              {branch_filter}
             ORDER BY s.sale_id
-        """)
+        """, params)
 
         rows = cur.fetchall()
 
@@ -177,6 +215,8 @@ def admin_get_sales():
 # ADMIN - GET SINGLE SALE
 # =========================
 @sales_bp.route("/admin/sales/<int:sale_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_single_sale(sale_id):
     try:
         conn = get_connection()
@@ -203,6 +243,9 @@ def admin_get_single_sale(sale_id):
         if not row:
             return jsonify({"message": "Sale not found"}), 404
 
+        if not _can_access_branch(row[4]):
+            return jsonify({"message": "Forbidden"}), 403
+
         sale = {
             "sale_id": row[0],
             "sale_code": row[1],
@@ -228,6 +271,8 @@ def admin_get_single_sale(sale_id):
 # ADMIN - ADD SALE
 # =========================
 @sales_bp.route("/admin/sales", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN", "BRANCH_STAFF")
 def admin_add_sale():
     conn = None
     cur = None
@@ -235,8 +280,12 @@ def admin_add_sale():
     try:
         data = request.get_json()
 
-        user_id = data.get("user_id")
-        branch_id = data.get("branch_id")
+        if _is_admin():
+            user_id = data.get("user_id")
+            branch_id = data.get("branch_id")
+        else:
+            user_id = _current_user_id()
+            branch_id = _current_branch_id()
         payment_method = data.get("payment_method")
         sale_date = data.get("sale_date")
         discount_percent = float(data.get("discount_percent") or 0)
@@ -311,7 +360,7 @@ def admin_add_sale():
         new_sale = cur.fetchone()
         conn.commit()
         log_audit(
-            user_id,
+            _current_user_id(),
             "CREATE_SALE",
             "POS",
             new_sale[0],
@@ -343,12 +392,18 @@ def admin_add_sale():
 # ADMIN - UPDATE SALE
 # =========================
 @sales_bp.route("/admin/sales/<int:sale_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN", "BRANCH_STAFF")
 def admin_update_sale(sale_id):
     try:
         data = request.get_json()
 
-        user_id = data.get("user_id")
-        branch_id = data.get("branch_id")
+        if _is_admin():
+            user_id = data.get("user_id")
+            branch_id = data.get("branch_id")
+        else:
+            user_id = _current_user_id()
+            branch_id = _current_branch_id()
         total_amount = data.get("total_amount")
         payment_method = data.get("payment_method")
         sale_date = data.get("sale_date")
@@ -379,11 +434,16 @@ def admin_update_sale(sale_id):
         cur = conn.cursor()
         ensure_sale_discount_columns(cur)
 
-        cur.execute("SELECT 1 FROM sale WHERE sale_id = %s", (sale_id,))
-        if not cur.fetchone():
+        existing_branch_id = _sale_branch(cur, sale_id)
+        if existing_branch_id is None:
             cur.close()
             conn.close()
             return jsonify({"message": "Sale not found"}), 404
+
+        if not _can_access_branch(existing_branch_id):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
 
         cur.execute("""
             SELECT user_id, role, branch_id
@@ -469,6 +529,8 @@ def admin_update_sale(sale_id):
 # ADMIN - DELETE SALE
 # =========================
 @sales_bp.route("/admin/sales/<int:sale_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_delete_sale(sale_id):
     try:
         conn = get_connection()
@@ -499,12 +561,20 @@ def admin_delete_sale(sale_id):
 # ADMIN - GET ALL SALE DETAILS
 # =========================
 @sales_bp.route("/admin/sale-details", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_sale_details():
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
+        params = []
+        branch_filter = ""
+        if not _is_admin():
+            branch_filter = "WHERE s.branch_id = %s"
+            params.append(_current_branch_id())
+
+        cur.execute(f"""
             SELECT sd.detail_id, sd.sale_id, s.sale_code,
                    sd.product_id, p.product_code, p.product_name,
                    sd.quantity, sd.unit_price, sd.subtotal,
@@ -535,8 +605,9 @@ def admin_get_sale_details():
                          sp.supplier_id ASC
                 LIMIT 1
             ) supplier_cost ON TRUE
+            {branch_filter}
             ORDER BY sd.detail_id
-        """)
+        """, params)
 
         rows = cur.fetchall()
 
@@ -570,6 +641,8 @@ def admin_get_sale_details():
 # ADMIN - GET SINGLE SALE DETAIL
 # =========================
 @sales_bp.route("/admin/sale-details/<int:detail_id>", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_single_sale_detail(detail_id):
     try:
         conn = get_connection()
@@ -578,7 +651,8 @@ def admin_get_single_sale_detail(detail_id):
         cur.execute("""
             SELECT sd.detail_id, sd.sale_id, s.sale_code,
                    sd.product_id, p.product_code, p.product_name,
-                   sd.quantity, sd.unit_price, sd.subtotal
+                   sd.quantity, sd.unit_price, sd.subtotal,
+                   s.branch_id
             FROM sale_detail sd
             JOIN sale s ON sd.sale_id = s.sale_id
             JOIN product p ON sd.product_id = p.product_id
@@ -592,6 +666,9 @@ def admin_get_single_sale_detail(detail_id):
 
         if not row:
             return jsonify({"message": "Sale detail not found"}), 404
+
+        if not _can_access_branch(row[9]):
+            return jsonify({"message": "Forbidden"}), 403
 
         sale_detail = {
             "detail_id": row[0],
@@ -616,18 +693,25 @@ def admin_get_single_sale_detail(detail_id):
 # ADMIN - GET SALE DETAILS BY SALE ID
 # =========================
 @sales_bp.route("/admin/sales/<int:sale_id>/details", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER", "BRANCH_STAFF")
 def admin_get_sale_details_by_sale_id(sale_id):
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("SELECT sale_id, sale_code FROM sale WHERE sale_id = %s", (sale_id,))
+        cur.execute("SELECT sale_id, sale_code, branch_id FROM sale WHERE sale_id = %s", (sale_id,))
         sale_row = cur.fetchone()
 
         if not sale_row:
             cur.close()
             conn.close()
             return jsonify({"message": "Sale not found"}), 404
+
+        if not _can_access_branch(sale_row[2]):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
 
         cur.execute("""
             SELECT sd.detail_id, sd.sale_id,
@@ -672,6 +756,8 @@ def admin_get_sale_details_by_sale_id(sale_id):
 # ADMIN - ADD SALE DETAIL
 # =========================
 @sales_bp.route("/admin/sale-details", methods=["POST"])
+@login_required
+@role_required("SYSTEM_ADMIN", "BRANCH_STAFF")
 def admin_add_sale_detail():
     try:
         data = request.get_json()
@@ -720,6 +806,11 @@ def admin_add_sale_detail():
             return jsonify({"message": "Sale not found"}), 404
 
         branch_id = sale_row[1]
+
+        if not _can_access_branch(branch_id):
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
 
         # 2. Check product exists
         cur.execute("""
@@ -845,6 +936,8 @@ def admin_add_sale_detail():
 # ADMIN - UPDATE SALE DETAIL
 # =========================
 @sales_bp.route("/admin/sale-details/<int:detail_id>", methods=["PUT"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_update_sale_detail(detail_id):
     try:
         data = request.get_json()
@@ -927,6 +1020,8 @@ def admin_update_sale_detail(detail_id):
 # ADMIN - DELETE SALE DETAIL
 # =========================
 @sales_bp.route("/admin/sale-details/<int:detail_id>", methods=["DELETE"])
+@login_required
+@role_required("SYSTEM_ADMIN")
 def admin_delete_sale_detail(detail_id):
     try:
         conn = get_connection()
@@ -954,28 +1049,38 @@ def admin_delete_sale_detail(detail_id):
 # ADMIN - REORDER RECOMMENDATIONS
 # =========================
 @sales_bp.route("/admin/reorder-recommendations", methods=["GET"])
+@login_required
+@role_required("SYSTEM_ADMIN", "INVENTORY_MANAGER")
 def admin_reorder_recommendations():
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
+        params = []
+        forecast_demand_expr = "COALESCE(SUM(sd.quantity), 50)"
+        if not _is_admin():
+            forecast_demand_expr = "COALESCE(SUM(sd.quantity) FILTER (WHERE s.branch_id = %s), 50)"
+            params.append(_current_branch_id())
+
+        cur.execute(f"""
             SELECT
                 p.product_id,
                 p.product_name,
-                COALESCE(SUM(sd.quantity), 50) AS forecast_demand,
+                {forecast_demand_expr} AS forecast_demand,
                 'Linear Regression' AS best_model,
                 3.25 AS mae,
                 4.10 AS rmse
             FROM product p
             LEFT JOIN sale_detail sd
                 ON p.product_id = sd.product_id
+            LEFT JOIN sale s
+                ON sd.sale_id = s.sale_id
             GROUP BY
                 p.product_id,
                 p.product_name
             ORDER BY
                 p.product_id
-        """)
+        """, params)
 
         rows = cur.fetchall()
 

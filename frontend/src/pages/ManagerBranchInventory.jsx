@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ManagerSidebar from "../components/ManagerSidebar";
+import api from "../api/axios";
 
 const API_BASE = "http://localhost:5000";
 
@@ -35,9 +36,9 @@ export default function ManagerBranchInventory() {
     const fetchInventory = useCallback(async (branchId) => {
         try {
             const [invRes, productRes, transferRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/inventory`),
-                fetch(`${API_BASE}/admin/products`),
-                fetch(`${API_BASE}/stock-transfers`),
+                fetch(`${API_BASE}/admin/inventory`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/products`, { credentials: "include" }),
+                fetch(`${API_BASE}/stock-transfers`, { credentials: "include" }),
             ]);
 
             const invData = await invRes.json();
@@ -52,7 +53,8 @@ export default function ManagerBranchInventory() {
             await Promise.all(
                 (Array.isArray(transferData) ? transferData : []).map(async (transfer) => {
                     const itemRes = await fetch(
-                        `${API_BASE}/stock-transfer/${transfer.transfer_id}/items`
+                        `${API_BASE}/stock-transfer/${transfer.transfer_id}/items`,
+                        { credentials: "include" }
                     );
                     const itemData = await itemRes.json();
 
@@ -89,7 +91,6 @@ export default function ManagerBranchInventory() {
             return;
         }
 
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         fetchInventory(user.branch_id);
     }, [fetchInventory, navigate, user]);
 
@@ -100,9 +101,15 @@ export default function ManagerBranchInventory() {
         }
     }, [toast]);
 
-    const logout = () => {
-        sessionStorage.removeItem("user");
-        navigate("/");
+    const logout = async () => {
+        try {
+            await api.post("/logout");
+            sessionStorage.removeItem("user");
+            navigate("/");
+        } catch (error) {
+            console.error(error);
+            alert("Logout failed. Please try again.");
+        }
     };
 
     const filtered = inventory.filter((item) =>
@@ -179,6 +186,7 @@ export default function ManagerBranchInventory() {
 
             const res = await fetch(`${API_BASE}/manager/stock-transfer/auto-suggest`, {
                 method: "POST",
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -271,6 +279,7 @@ export default function ManagerBranchInventory() {
                 `${API_BASE}/admin/inventory/${editingItem.product_id}/${editingItem.branch_id}`,
                 {
                     method: "PUT",
+                    credentials: "include",
                     headers: {
                         "Content-Type": "application/json",
                     },

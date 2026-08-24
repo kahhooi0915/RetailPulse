@@ -1,5 +1,5 @@
 import DashboardLayout from "../layouts/DashboardLayout";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Building2,
@@ -8,7 +8,6 @@ import {
     Pencil,
     Power,
     MapPin,
-    Phone,
     X,
     RefreshCcw,
     Warehouse,
@@ -106,7 +105,7 @@ export default function AdminBranchManagement() {
         try {
             setLoading(true);
 
-            const res = await fetch(`${API_BASE}/admin/branches`);
+            const res = await fetch(`${API_BASE}/admin/branches`, { credentials: "include" });
             const data = await res.json();
 
             if (!res.ok) {
@@ -142,12 +141,6 @@ export default function AdminBranchManagement() {
     const activeBranches = branches.filter((item) => item.status !== "INACTIVE").length;
     const inactiveBranches = branches.filter((item) => item.status === "INACTIVE").length;
     const warehouses = branches.filter((item) => item.branch_type === "WAREHOUSE" && item.status !== "INACTIVE").length;
-    const branchesWithAddress = branches.filter((item) =>
-        item.branch_address?.trim()
-    ).length;
-    const branchesWithPhone = branches.filter((item) =>
-        item.phone?.trim()
-    ).length;
     const incompleteBranches = branches.filter(
         (item) => !item.branch_address?.trim() || !item.phone?.trim()
     ).length;
@@ -251,6 +244,7 @@ export default function AdminBranchManagement() {
 
             const res = await fetch(url, {
                 method,
+                credentials: "include",
                 headers: {
                     "Content-Type": "application/json",
                 },
@@ -297,6 +291,7 @@ export default function AdminBranchManagement() {
                 `${API_BASE}/admin/branches/${selectedBranch.branch_id}`,
                 {
                     method: "DELETE",
+                    credentials: "include",
                 }
             );
 

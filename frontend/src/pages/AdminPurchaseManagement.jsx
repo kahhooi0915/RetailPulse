@@ -35,6 +35,16 @@ const emptyPurchase = {
     items: [createEmptyPurchaseItem()],
 };
 
+const readArrayResponse = async (response, fallbackMessage) => {
+    const data = await response.json().catch(() => []);
+
+    if (!response.ok) {
+        throw new Error(data.message || fallbackMessage);
+    }
+
+    return Array.isArray(data) ? data : [];
+};
+
 export default function AdminPurchaseManagement() {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -92,21 +102,21 @@ export default function AdminPurchaseManagement() {
             setLoading(true);
 
             const [purchaseRes, supplierRes, branchRes, supplierProductRes, productsNotPurchasedRes] = await Promise.all([
-                fetch(`${API_BASE}/admin/purchases`),
-                fetch(`${API_BASE}/admin/suppliers`),
-                fetch(`${API_BASE}/admin/branches`),
-                fetch(`${API_BASE}/admin/supplier-products?available=1`),
-                fetch(`${API_BASE}/admin/purchases/products-not-purchased`),
+                fetch(`${API_BASE}/admin/purchases`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/suppliers`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/branches`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/supplier-products?available=1`, { credentials: "include" }),
+                fetch(`${API_BASE}/admin/purchases/products-not-purchased`, { credentials: "include" }),
             ]);
 
-            setPurchases(await purchaseRes.json());
-            setSuppliers(await supplierRes.json());
-            setBranches(await branchRes.json());
-            setSupplierProducts(await supplierProductRes.json());
-            setProductsNotPurchased(await productsNotPurchasedRes.json());
+            setPurchases(await readArrayResponse(purchaseRes, "Failed to load purchases."));
+            setSuppliers(await readArrayResponse(supplierRes, "Failed to load suppliers."));
+            setBranches(await readArrayResponse(branchRes, "Failed to load branches."));
+            setSupplierProducts(await readArrayResponse(supplierProductRes, "Failed to load supplier products."));
+            setProductsNotPurchased(await readArrayResponse(productsNotPurchasedRes, "Failed to load purchase recommendations."));
         } catch (error) {
             console.error(error);
-            showToast("Failed to load purchase data.", "error");
+            showToast(error.message || "Failed to load purchase data.", "error");
         } finally {
             setLoading(false);
         }
@@ -393,6 +403,7 @@ export default function AdminPurchaseManagement() {
 
             const res = await fetch(`${API_BASE}/admin/purchases`, {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     supplier_id: Number(purchaseForm.supplier_id),
@@ -428,7 +439,7 @@ export default function AdminPurchaseManagement() {
 
     async function openPurchaseDetail(purchaseId) {
         try {
-            const res = await fetch(`${API_BASE}/admin/purchases/${purchaseId}`);
+            const res = await fetch(`${API_BASE}/admin/purchases/${purchaseId}`, { credentials: "include" });
             const data = await res.json();
 
             if (!res.ok) {
@@ -448,6 +459,7 @@ export default function AdminPurchaseManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/purchases/${purchaseId}/ordered`, {
                 method: "PUT",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_user_id: user.user_id }),
             });
@@ -474,6 +486,7 @@ export default function AdminPurchaseManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/purchases/${purchaseId}/cancel`, {
                 method: "PUT",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_user_id: user.user_id }),
             });
@@ -500,6 +513,7 @@ export default function AdminPurchaseManagement() {
         try {
             const res = await fetch(`${API_BASE}/admin/purchases/${purchaseId}/receive`, {
                 method: "PUT",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_user_id: user.user_id }),
             });
