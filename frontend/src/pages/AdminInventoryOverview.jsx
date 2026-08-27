@@ -19,6 +19,7 @@ const DEFAULT_REORDER_LEVEL = 10;
 const SAFETY_STOCK_MULTIPLIER = 1.2;
 const ROWS_PER_PAGE = 5;
 const ACTIVE_TRANSFER_STATUSES = ["PENDING", "PENDING_SOURCE", "APPROVED"];
+const HEATMAP_STATUSES = ["OUT_OF_STOCK", "LOW_STOCK", "WATCH", "HEALTHY"];
 
 export default function InventoryOverview() {
     const user = JSON.parse(sessionStorage.getItem("user")) || {};
@@ -196,6 +197,97 @@ export default function InventoryOverview() {
             return matchesSearch && matchesBranch && matchesStatus;
         });
     }, [stockRows, search, branchFilter, stockFilter]);
+
+    const heatmapLocations = useMemo(() => {
+        const map = {};
+
+        branches.forEach((branch) => {
+            const branchId = Number(branch.branch_id);
+            map[branchId] = {
+                branch_id: branchId,
+                branch_name: branch.branch_name || "Unknown Location",
+                branch_type: branch.branch_type || "BRANCH",
+            };
+        });
+
+        stockRows.forEach((item) => {
+            const branchId = Number(item.branch_id);
+            if (!map[branchId]) {
+                map[branchId] = {
+                    branch_id: branchId,
+                    branch_name: item.branch_name || "Unknown Location",
+                    branch_type: item.branch_type || "BRANCH",
+                };
+            }
+        });
+
+        return Object.values(map).sort(sortLocations);
+    }, [branches, stockRows]);
+
+    const inventoryHeatmap = useMemo(() => {
+        const keyword = search.trim().toLowerCase();
+        const locationFilter = branchFilter === "ALL"
+            ? heatmapLocations
+            : heatmapLocations.filter((location) => location.branch_name === branchFilter);
+        const locationIds = new Set(locationFilter.map((location) => Number(location.branch_id)));
+        const productRows = {};
+        const summary = HEATMAP_STATUSES.reduce((acc, status) => {
+            acc[status] = 0;
+            return acc;
+        }, {});
+
+        stockRows.forEach((item) => {
+            const productId = Number(item.product_id);
+            const branchId = Number(item.branch_id);
+            if (!locationIds.has(branchId)) return;
+
+            const productMatches =
+                !keyword ||
+                item.product_code?.toLowerCase().includes(keyword) ||
+                item.product_name?.toLowerCase().includes(keyword) ||
+                item.category_name?.toLowerCase().includes(keyword);
+            const locationMatches =
+                !keyword ||
+                item.branch_name?.toLowerCase().includes(keyword);
+
+            if (!productMatches && !locationMatches) return;
+
+            const quantity = Number(item.quantity_in_stock || 0);
+            const reorderLevel = Number(item.reorder_level || DEFAULT_REORDER_LEVEL);
+            const heatmapStatus = getHeatmapStatus(quantity, reorderLevel);
+            const matchesStatus =
+                stockFilter === "ALL" ||
+                item.stock_status === stockFilter ||
+                heatmapStatus === stockFilter;
+
+            if (!matchesStatus) return;
+
+            if (!productRows[productId]) {
+                productRows[productId] = {
+                    product_id: productId,
+                    product_code: item.product_code,
+                    product_name: item.product_name,
+                    category_name: item.category_name,
+                    cells: {},
+                };
+            }
+
+            productRows[productId].cells[branchId] = {
+                quantity,
+                reorder_level: reorderLevel,
+                status: heatmapStatus,
+            };
+            summary[heatmapStatus] += 1;
+        });
+
+        return {
+            locations: locationFilter,
+            products: Object.values(productRows).sort(
+                (a, b) => a.product_name?.localeCompare(b.product_name || "") || 0
+            ),
+            summary,
+        };
+    }, [stockRows, heatmapLocations, search, branchFilter, stockFilter]);
 
     const productDistribution = useMemo(() => {
         const map = {};
@@ -657,6 +749,115 @@ export default function InventoryOverview() {
                 </SectionCard>
 
                 <SectionCard
+                    icon={<PackageSearch size={21} />}
+                    title="Inventory Heatmap"
+                    desc="Product stock levels across branch and warehouse locations."
+                    badge={`${inventoryHeatmap.products.length} products`}
+                    badgeTone="green"
+                >
+                    <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+                        {HEATMAP_STATUSES.map((status) => (
+                            <div
+                                key={`heatmap-summary-${status}`}
+                                className={`rounded-2xl px-4 py-3 ${getHeatmapSummaryStyle(status)}`}
+                            >
+                                <p className="text-xs font-extrabold uppercase">
+                                    {formatHeatmapStatus(status)}
+                                </p>
+                                <p className="mt-1 text-2xl font-black">
+                                    {inventoryHeatmap.summary[status] || 0}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="mb-4 flex flex-wrap gap-3">
+                        {HEATMAP_STATUSES.map((status) => (
+                            <div
+                                key={`heatmap-legend-${status}`}
+                                className="flex items-center gap-2 text-xs font-extrabold text-[#17325c]"
+                            >
+                                <span className={`h-3 w-3 rounded-full ${getHeatmapLegendStyle(status)}`} />
+                                {formatHeatmapStatus(status)}
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-left text-sm">
+                            <thead className="sticky top-0 z-10 bg-white">
+                                <tr className="border-b text-[#6f85a3]">
+                                    <th className="sticky left-0 z-20 border-b bg-white py-3 pr-5 text-xs font-extrabold uppercase">
+                                        Product
+                                    </th>
+                                    {inventoryHeatmap.locations.map((location) => (
+                                        <th
+                                            key={`heatmap-head-${location.branch_id}`}
+                                            className="border-b px-3 text-center text-xs font-extrabold uppercase"
+                                        >
+                                            <span className="block text-[#17325c]">
+                                                {location.branch_name}
+                                            </span>
+                                            <span className="mt-1 block text-[11px] text-[#6f85a3]">
+                                                {location.branch_type === "WAREHOUSE" ? "Warehouse" : "Branch"}
+                                            </span>
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {loading ? (
+                                    <EmptyRow colSpan={inventoryHeatmap.locations.length + 1} text="Loading inventory heatmap..." />
+                                ) : inventoryHeatmap.products.length === 0 ? (
+                                    <EmptyRow colSpan={inventoryHeatmap.locations.length + 1} text="No heatmap records found." />
+                                ) : (
+                                    inventoryHeatmap.products.map((product) => (
+                                        <tr
+                                            key={`heatmap-product-${product.product_id}`}
+                                            className="border-b last:border-none"
+                                        >
+                                            <td className="sticky left-0 z-10 border-b border-blue-50 bg-white py-4 pr-5">
+                                                <p className="font-extrabold text-[#07102f]">
+                                                    {product.product_name || "-"}
+                                                </p>
+                                                <p className="text-xs font-bold uppercase text-[#6f85a3]">
+                                                    {product.product_code || "-"}
+                                                </p>
+                                            </td>
+                                            {inventoryHeatmap.locations.map((location) => {
+                                                const cell = product.cells[Number(location.branch_id)];
+
+                                                return (
+                                                    <td
+                                                        key={`heatmap-cell-${product.product_id}-${location.branch_id}`}
+                                                        className="border-b border-blue-50 px-3 py-3 align-top"
+                                                    >
+                                                        {cell ? (
+                                                            <div className={`min-h-[76px] rounded-2xl border px-3 py-2 ${getHeatmapCellStyle(cell.status)}`}>
+                                                                <p className="text-lg font-black leading-tight">
+                                                                    {cell.quantity}
+                                                                </p>
+                                                                <p className="mt-1 text-[11px] font-extrabold uppercase">
+                                                                    Reorder {cell.reorder_level}
+                                                                </p>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="min-h-[76px] rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-extrabold text-slate-400">
+                                                                No record
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </SectionCard>
+
+                <SectionCard
                     icon={<ClipboardList size={21} />}
                     title="Overall Stock Transfer Records"
                     desc="Full transfer reference table for warehouse-to-branch and branch-to-branch stock movements."
@@ -995,6 +1196,68 @@ function SectionCard({ icon, title, desc, badge, badgeTone, children }) {
             {children}
         </div>
     );
+}
+
+function getHeatmapStatus(quantity, reorderLevel) {
+    const currentQuantity = Number(quantity || 0);
+    const currentReorderLevel = Number(reorderLevel || 0);
+
+    if (currentQuantity === 0) return "OUT_OF_STOCK";
+    if (currentQuantity <= currentReorderLevel) return "LOW_STOCK";
+    if (currentReorderLevel > 0 && currentQuantity <= currentReorderLevel * 1.5) return "WATCH";
+    return "HEALTHY";
+}
+
+function getHeatmapCellStyle(status) {
+    const styles = {
+        OUT_OF_STOCK: "border-red-200 bg-red-50 text-red-800",
+        LOW_STOCK: "border-amber-200 bg-amber-50 text-amber-800",
+        WATCH: "border-blue-200 bg-blue-50 text-[#1e4db7]",
+        HEALTHY: "border-green-200 bg-green-50 text-green-800",
+    };
+
+    return styles[status] || "border-slate-100 bg-slate-50 text-slate-500";
+}
+
+function getHeatmapSummaryStyle(status) {
+    const styles = {
+        OUT_OF_STOCK: "bg-red-50 text-red-800",
+        LOW_STOCK: "bg-amber-50 text-amber-800",
+        WATCH: "bg-blue-50 text-[#1e4db7]",
+        HEALTHY: "bg-green-50 text-green-800",
+    };
+
+    return styles[status] || "bg-slate-50 text-slate-600";
+}
+
+function getHeatmapLegendStyle(status) {
+    const styles = {
+        OUT_OF_STOCK: "bg-red-500",
+        LOW_STOCK: "bg-amber-400",
+        WATCH: "bg-blue-500",
+        HEALTHY: "bg-green-500",
+    };
+
+    return styles[status] || "bg-slate-300";
+}
+
+function formatHeatmapStatus(status) {
+    const labels = {
+        OUT_OF_STOCK: "Out of Stock",
+        LOW_STOCK: "Low Stock",
+        WATCH: "Watch",
+        HEALTHY: "Healthy",
+    };
+
+    return labels[status] || formatStatus(status);
+}
+
+function sortLocations(a, b) {
+    if (a.branch_type === b.branch_type) {
+        return a.branch_name.localeCompare(b.branch_name);
+    }
+
+    return a.branch_type === "WAREHOUSE" ? -1 : 1;
 }
 
 function StockStatusBadge({ status }) {
