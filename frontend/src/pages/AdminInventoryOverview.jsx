@@ -771,29 +771,29 @@ export default function InventoryOverview() {
                         ))}
                     </div>
 
-                    <div className="mb-4 flex flex-wrap gap-3">
+                    <div className="mb-4 flex flex-wrap gap-4">
                         {HEATMAP_STATUSES.map((status) => (
                             <div
                                 key={`heatmap-legend-${status}`}
-                                className="flex items-center gap-2 text-xs font-extrabold text-[#17325c]"
+                                className="flex items-center gap-2 text-xs font-bold text-[#17325c]"
                             >
-                                <span className={`h-3 w-3 rounded-full ${getHeatmapLegendStyle(status)}`} />
-                                {formatHeatmapStatus(status)}
+                                <span className={`h-3 w-6 rounded-sm ${getHeatmapLegendStyle(status)}`} />
+                                {getHeatmapLegendText(status)}
                             </div>
                         ))}
                     </div>
 
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-left text-sm">
+                        <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
                             <thead className="sticky top-0 z-10 bg-white">
-                                <tr className="border-b text-[#6f85a3]">
-                                    <th className="sticky left-0 z-20 border-b bg-white py-3 pr-5 text-xs font-extrabold uppercase">
+                                <tr className="text-[#6f85a3]">
+                                    <th className="sticky left-0 z-20 border border-blue-50 bg-white px-4 py-3 text-xs font-extrabold uppercase">
                                         Product
                                     </th>
                                     {inventoryHeatmap.locations.map((location) => (
                                         <th
                                             key={`heatmap-head-${location.branch_id}`}
-                                            className="border-b px-3 text-center text-xs font-extrabold uppercase"
+                                            className="border border-blue-50 bg-[#f8fcff] px-4 py-3 text-center text-xs font-extrabold uppercase"
                                         >
                                             <span className="block text-[#17325c]">
                                                 {location.branch_name}
@@ -814,9 +814,9 @@ export default function InventoryOverview() {
                                     inventoryHeatmap.products.map((product) => (
                                         <tr
                                             key={`heatmap-product-${product.product_id}`}
-                                            className="border-b last:border-none"
+                                            className="last:border-none"
                                         >
-                                            <td className="sticky left-0 z-10 border-b border-blue-50 bg-white py-4 pr-5">
+                                            <td className="sticky left-0 z-10 w-[260px] border border-blue-50 bg-white px-4 py-4">
                                                 <p className="font-extrabold text-[#07102f]">
                                                     {product.product_name || "-"}
                                                 </p>
@@ -830,21 +830,23 @@ export default function InventoryOverview() {
                                                 return (
                                                     <td
                                                         key={`heatmap-cell-${product.product_id}-${location.branch_id}`}
-                                                        className="border-b border-blue-50 px-3 py-3 align-top"
+                                                        className={`h-16 border border-white px-4 py-3 text-center align-middle ${
+                                                            cell
+                                                                ? getHeatmapCellStyle(cell.status)
+                                                                : "bg-slate-50 text-slate-300"
+                                                        }`}
+                                                        title={
+                                                            cell
+                                                                ? `${formatHeatmapStatus(cell.status)}: ${cell.quantity} units, reorder level ${cell.reorder_level}`
+                                                                : "No inventory record"
+                                                        }
                                                     >
                                                         {cell ? (
-                                                            <div className={`min-h-[76px] rounded-2xl border px-3 py-2 ${getHeatmapCellStyle(cell.status)}`}>
-                                                                <p className="text-lg font-black leading-tight">
-                                                                    {cell.quantity}
-                                                                </p>
-                                                                <p className="mt-1 text-[11px] font-extrabold uppercase">
-                                                                    Reorder {cell.reorder_level}
-                                                                </p>
-                                                            </div>
+                                                            <span className="text-base font-black">
+                                                                {cell.quantity}
+                                                            </span>
                                                         ) : (
-                                                            <div className="min-h-[76px] rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-extrabold text-slate-400">
-                                                                No record
-                                                            </div>
+                                                            <span className="text-xs font-bold">-</span>
                                                         )}
                                                     </td>
                                                 );
@@ -1210,13 +1212,13 @@ function getHeatmapStatus(quantity, reorderLevel) {
 
 function getHeatmapCellStyle(status) {
     const styles = {
-        OUT_OF_STOCK: "border-red-200 bg-red-50 text-red-800",
-        LOW_STOCK: "border-amber-200 bg-amber-50 text-amber-800",
-        WATCH: "border-blue-200 bg-blue-50 text-[#1e4db7]",
-        HEALTHY: "border-green-200 bg-green-50 text-green-800",
+        OUT_OF_STOCK: "bg-red-50 text-red-800",
+        LOW_STOCK: "bg-amber-50 text-amber-800",
+        WATCH: "bg-blue-50 text-[#1e4db7]",
+        HEALTHY: "bg-emerald-50 text-emerald-800",
     };
 
-    return styles[status] || "border-slate-100 bg-slate-50 text-slate-500";
+    return styles[status] || "bg-slate-50 text-slate-500";
 }
 
 function getHeatmapSummaryStyle(status) {
@@ -1224,7 +1226,7 @@ function getHeatmapSummaryStyle(status) {
         OUT_OF_STOCK: "bg-red-50 text-red-800",
         LOW_STOCK: "bg-amber-50 text-amber-800",
         WATCH: "bg-blue-50 text-[#1e4db7]",
-        HEALTHY: "bg-green-50 text-green-800",
+        HEALTHY: "bg-emerald-50 text-emerald-800",
     };
 
     return styles[status] || "bg-slate-50 text-slate-600";
@@ -1232,10 +1234,10 @@ function getHeatmapSummaryStyle(status) {
 
 function getHeatmapLegendStyle(status) {
     const styles = {
-        OUT_OF_STOCK: "bg-red-500",
-        LOW_STOCK: "bg-amber-400",
-        WATCH: "bg-blue-500",
-        HEALTHY: "bg-green-500",
+        OUT_OF_STOCK: "bg-red-100 ring-1 ring-red-200",
+        LOW_STOCK: "bg-amber-100 ring-1 ring-amber-200",
+        WATCH: "bg-blue-100 ring-1 ring-blue-200",
+        HEALTHY: "bg-emerald-100 ring-1 ring-emerald-200",
     };
 
     return styles[status] || "bg-slate-300";
@@ -1250,6 +1252,17 @@ function formatHeatmapStatus(status) {
     };
 
     return labels[status] || formatStatus(status);
+}
+
+function getHeatmapLegendText(status) {
+    const labels = {
+        OUT_OF_STOCK: "Red: 0 stock",
+        LOW_STOCK: "Amber: at or below reorder level",
+        WATCH: "Blue: near reorder level",
+        HEALTHY: "Light green: above reorder level",
+    };
+
+    return labels[status] || formatHeatmapStatus(status);
 }
 
 function sortLocations(a, b) {
