@@ -238,6 +238,10 @@ export default function AdminUserManagement() {
     const handleFormChange = (field, value) => {
         let finalValue = value;
 
+        if (field === "name") {
+            finalValue = value.toUpperCase();
+        }
+
         if (field === "phone") {
             finalValue = formatPhoneNumber(value);
         }

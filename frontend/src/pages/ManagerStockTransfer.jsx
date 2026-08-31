@@ -61,6 +61,7 @@ export default function ManagerStockTransfer() {
     const [branches, setBranches] = useState([]);
     const [products, setProducts] = useState([]);
     const [inventory, setInventory] = useState([]);
+    const [sourceInventory, setSourceInventory] = useState([]);
     const [transferItems, setTransferItems] = useState({});
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
@@ -95,6 +96,39 @@ export default function ManagerStockTransfer() {
         setUser(savedUser);
         fetchData(savedUser);
     }, [navigate]);
+
+    useEffect(() => {
+        if (!form.from_branch_id || !user?.branch_id) {
+            setSourceInventory([]);
+            return;
+        }
+
+        let active = true;
+        setSourceInventory([]);
+
+        const fetchSourceInventory = async () => {
+            try {
+                const data = await fetchJsonWithTimeout(
+                    `${API_BASE}/manager/stock-transfer/source-inventory?source_branch_id=${form.from_branch_id}`
+                );
+
+                if (active) {
+                    setSourceInventory(Array.isArray(data) ? data : []);
+                }
+            } catch (error) {
+                console.error("Failed to load source inventory", error);
+                if (active) {
+                    setSourceInventory([]);
+                }
+            }
+        };
+
+        fetchSourceInventory();
+
+        return () => {
+            active = false;
+        };
+    }, [form.from_branch_id, user]);
 
     const fetchData = async (currentUser = user) => {
         try {
@@ -164,7 +198,7 @@ export default function ManagerStockTransfer() {
     const getSourceBranchStock = (productId) => {
         if (!form.from_branch_id || !productId) return null;
 
-        const stockRecord = inventory.find(
+        const stockRecord = sourceInventory.find(
             (item) =>
                 Number(item.product_id) === Number(productId) &&
                 Number(item.branch_id) === Number(form.from_branch_id)
@@ -221,7 +255,7 @@ export default function ManagerStockTransfer() {
     const relatedHistory = useMemo(() => {
         return transfers.filter(
             (transfer) =>
-                (isCompletedStatus(transfer) || transfer.status === "REJECTED") &&
+                (isAwaitingReceiveStatus(transfer) || isCompletedStatus(transfer) || transfer.status === "REJECTED") &&
                 (
                     Number(transfer.from_branch_id) === Number(user?.branch_id) ||
                     Number(transfer.to_branch_id) === Number(user?.branch_id) ||
@@ -587,7 +621,7 @@ export default function ManagerStockTransfer() {
                             title="Transfer History"
                             value={relatedHistory.length}
                             tone="dark"
-                            tooltip="Completed or rejected transfer records related to your branch."
+                            tooltip="Approved, completed, or rejected transfer records related to your branch."
                         />
                     </section>
 
@@ -788,7 +822,7 @@ export default function ManagerStockTransfer() {
                                     Transfer History
                                 </h2>
                                 <p className="mt-1 text-sm text-[#6f85a3]">
-                                    Completed or rejected transfer records related to your branch.
+                                    Approved, completed, or rejected transfer records related to your branch.
                                 </p>
                             </div>
 
@@ -821,7 +855,7 @@ export default function ManagerStockTransfer() {
                             transfers={relatedHistory}
                             transferItems={transferItems}
                             getBranchName={getBranchName}
-                            empty="No completed or rejected transfer history found."
+                            empty="No approved, completed, or rejected transfer history found."
                         />
                     </section>
                 </motion.main>
@@ -1627,7 +1661,7 @@ function buildHistoryPrintHtml({
 <td>${htmlEscape(transfer.status === "REJECTED" ? transfer.reject_reason || "-" : "-")}</td>
 </tr>`;
         }).join("")
-        : `<tr><td colspan="8" class="empty">No completed or rejected transfer history found.</td></tr>`;
+        : `<tr><td colspan="8" class="empty">No approved, completed, or rejected transfer history found.</td></tr>`;
 
     return `<!doctype html>
 <html>

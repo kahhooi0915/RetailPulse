@@ -1290,8 +1290,71 @@ def get_manager_stock_transfer_approvals():
 
     except Exception as e:
         return jsonify({"message": str(e)}), 500
-    
-    # =========================
+
+
+@stock_transfer_bp.route("/manager/stock-transfer/source-inventory", methods=["GET"])
+@login_required
+@role_required("INVENTORY_MANAGER")
+def get_manager_source_inventory():
+    conn = None
+    cur = None
+    try:
+        source_branch_id = _to_int(request.args.get("source_branch_id"))
+        current_branch_id = _to_int(_current_branch_id())
+
+        if not source_branch_id:
+            return jsonify({"message": "source_branch_id is required"}), 400
+
+        if source_branch_id == current_branch_id:
+            return jsonify({"message": "Source and destination branch cannot be the same"}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+        _ensure_branch_status_column(cur)
+
+        cur.execute("""
+            SELECT branch_id
+            FROM branch
+            WHERE branch_id = %s
+              AND status = 'ACTIVE'
+        """, (source_branch_id,))
+
+        if not cur.fetchone():
+            return jsonify({"message": "Source branch not found or inactive"}), 404
+
+        cur.execute("""
+            SELECT i.product_id,
+                   i.branch_id,
+                   i.quantity_in_stock
+            FROM inventory i
+            JOIN product p ON i.product_id = p.product_id
+            JOIN category c ON p.category_id = c.category_id
+            WHERE i.branch_id = %s
+              AND p.status = 'ACTIVE'
+              AND c.status = 'ACTIVE'
+            ORDER BY i.product_id
+        """, (source_branch_id,))
+
+        inventory = [
+            {
+                "product_id": row[0],
+                "branch_id": row[1],
+                "quantity_in_stock": row[2],
+            }
+            for row in cur.fetchall()
+        ]
+
+        return jsonify(inventory), 200
+
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+# =========================
 # ADD TRANSFER ITEM
 # =========================
 @stock_transfer_bp.route("/stock-transfer/<int:transfer_id>/add-item", methods=["POST"])

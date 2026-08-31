@@ -12,6 +12,19 @@ EMAIL_REGEX = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
 PHONE_REGEX = r"^\d{3}-\d{6,8}$"
 
 
+def normalize_phone(phone):
+    phone = str(phone or "").strip()
+
+    if not phone:
+        return ""
+
+    digits = re.sub(r"\D", "", phone)
+    if 9 <= len(digits) <= 11:
+        return f"{digits[:3]}-{digits[3:]}"
+
+    return phone
+
+
 def validate_user_input(name, email, phone, password, role, is_update=False):
     if not name or not name.strip():
         return "Name is required"
@@ -181,7 +194,7 @@ def admin_add_user():
 
         name = data.get("name")
         email = data.get("email")
-        phone = data.get("phone")
+        phone = normalize_phone(data.get("phone"))
         password = data.get("password")
         role = data.get("role")
         branch_id = data.get("branch_id")
@@ -279,7 +292,7 @@ def admin_update_user(user_id):
 
         name = data.get("name")
         email = data.get("email")
-        phone = data.get("phone")
+        phone = normalize_phone(data.get("phone"))
         password = data.get("password")
         role = data.get("role")
         branch_id = data.get("branch_id")

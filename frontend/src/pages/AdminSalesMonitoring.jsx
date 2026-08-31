@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, Download, HelpCircle, LineChart as LineChartIcon } from "lucide-react";
+import { BarChart3, Download, HelpCircle, LineChart as LineChartIcon, Printer } from "lucide-react";
 import html2canvas from "html2canvas";
 import {
     Bar,
@@ -27,6 +27,8 @@ export default function SalesMonitoring() {
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [branchFilter, setBranchFilter] = useState("ALL");
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
     const [salesMetric, setSalesMetric] = useState("REVENUE");
     const [selectedProduct, setSelectedProduct] = useState("ALL");
 
@@ -64,6 +66,7 @@ export default function SalesMonitoring() {
         return sales.filter((sale) => {
             const matchBranch =
                 branchFilter === "ALL" || sale.branch_name === branchFilter;
+            const matchDate = isSaleWithinDateRange(sale.sale_date, startDate, endDate);
 
             const keyword = search.toLowerCase();
             const matchSearch =
@@ -72,9 +75,16 @@ export default function SalesMonitoring() {
                 sale.branch_name?.toLowerCase().includes(keyword) ||
                 sale.payment_method?.toLowerCase().includes(keyword);
 
-            return matchBranch && matchSearch;
+            return matchBranch && matchDate && matchSearch;
         });
-    }, [sales, search, branchFilter]);
+    }, [sales, search, branchFilter, startDate, endDate]);
+
+    const dateRangeLabel = useMemo(() => {
+        if (startDate && endDate) return `${startDate} to ${endDate}`;
+        if (startDate) return `From ${startDate}`;
+        if (endDate) return `Until ${endDate}`;
+        return "All Dates";
+    }, [startDate, endDate]);
 
     const totalRevenue = filteredSales.reduce(
         (sum, sale) => sum + Number(sale.total_amount || 0),
@@ -367,6 +377,8 @@ export default function SalesMonitoring() {
         const workbookBlob = buildSalesMonitoringWorkbookBlob({
             generatedAt: generatedAt.toLocaleString(),
             branchFilter,
+            startDate,
+            endDate,
             search,
             salesMetric,
             selectedProduct,
@@ -398,26 +410,109 @@ export default function SalesMonitoring() {
         URL.revokeObjectURL(url);
     };
 
+    const handlePrintReport = () => {
+        window.print();
+    };
+
     return (
-        <DashboardLayout
-            user={user}
-            title="Sales Monitoring"
-            subtitle="Monitor sales performance, transactions, branches, and top-selling products."
-            onRefresh={fetchData}
-            headerActions={
-                <button
-                    type="button"
-                    onClick={handleDownloadExcel}
-                    disabled={loading}
-                    className="flex h-11 items-center justify-center gap-2 rounded-full bg-[#0c2f73] px-5 text-sm font-extrabold text-white shadow transition hover:bg-[#103986] disabled:cursor-not-allowed disabled:opacity-60"
-                    title="Download sales reporting page data and charts as Excel"
-                >
-                    <Download size={16} />
-                    Download Excel
-                </button>
-            }
-        >
-            <div className="space-y-6">
+        <>
+            <style>
+                {`
+                    @media print {
+                        @page {
+                            size: A4;
+                            margin: 12mm;
+                        }
+
+                        html,
+                        body,
+                        #root {
+                            height: auto !important;
+                            overflow: visible !important;
+                            background: #ffffff !important;
+                        }
+
+                        body * {
+                            visibility: hidden !important;
+                        }
+
+                        .sales-report-print-area,
+                        .sales-report-print-area * {
+                            visibility: visible !important;
+                        }
+
+                        .sales-report-print-area {
+                            position: absolute !important;
+                            left: 0 !important;
+                            top: 0 !important;
+                            width: 100% !important;
+                            background: #ffffff !important;
+                            color: #07102f !important;
+                        }
+
+                        .no-print {
+                            display: none !important;
+                        }
+
+                        .sales-report-print-area > *,
+                        .sales-report-print-area table {
+                            break-inside: avoid;
+                            page-break-inside: avoid;
+                        }
+
+                        .sales-report-print-area .shadow,
+                        .sales-report-print-area .shadow-sm {
+                            box-shadow: none !important;
+                        }
+                    }
+                `}
+            </style>
+
+            <DashboardLayout
+                user={user}
+                title="Sales Monitoring"
+                subtitle="Monitor sales performance, transactions, branches, and top-selling products."
+                onRefresh={fetchData}
+                headerActions={
+                    <div className="no-print flex flex-wrap gap-3">
+                        <button
+                            type="button"
+                            onClick={handlePrintReport}
+                            disabled={loading}
+                            className="flex h-11 items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-extrabold text-[#0c2f73] shadow transition hover:bg-[#eef6fb] disabled:cursor-not-allowed disabled:opacity-60"
+                            title="Print the filtered sales report"
+                        >
+                            <Printer size={16} />
+                            Print Report
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleDownloadExcel}
+                            disabled={loading}
+                            className="flex h-11 items-center justify-center gap-2 rounded-full bg-[#0c2f73] px-5 text-sm font-extrabold text-white shadow transition hover:bg-[#103986] disabled:cursor-not-allowed disabled:opacity-60"
+                            title="Download sales reporting page data and charts as Excel"
+                        >
+                            <Download size={16} />
+                            Download Excel
+                        </button>
+                    </div>
+                }
+            >
+            <div className="sales-report-print-area space-y-6">
+                <div className="hidden rounded-2xl bg-white p-5 print:block">
+                    <p className="text-xs font-bold uppercase tracking-widest text-[#1e4db7]">
+                        RetailPulse
+                    </p>
+                    <h2 className="mt-2 text-2xl font-extrabold text-[#07102f]">
+                        Sales Report
+                    </h2>
+                    <p className="mt-1 text-sm font-semibold text-[#6f85a3]">
+                        Branch: {branchFilter === "ALL" ? "All Branches" : branchFilter}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#6f85a3]">
+                        Date Range: {dateRangeLabel}
+                    </p>
+                </div>
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-3 xl:grid-cols-6">
                     <SummaryCard title="Total Revenue" value={formatCurrency(totalRevenue)} />
                     <SummaryCard title="Transactions" value={totalTransactions} />
@@ -684,7 +779,7 @@ export default function SalesMonitoring() {
                             </p>
                         </div>
 
-                        <div className="flex flex-col gap-3 md:flex-row">
+                        <div className="no-print grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
                             <input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
@@ -703,6 +798,35 @@ export default function SalesMonitoring() {
                                     </option>
                                 ))}
                             </select>
+
+                            <input
+                                type="date"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                className="rounded-2xl border border-blue-100 px-4 py-3 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7]"
+                                title="Start date"
+                            />
+
+                            <input
+                                type="date"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                className="rounded-2xl border border-blue-100 px-4 py-3 text-sm font-semibold text-[#17325c] outline-none focus:border-[#1e4db7]"
+                                title="End date"
+                            />
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSearch("");
+                                    setBranchFilter("ALL");
+                                    setStartDate("");
+                                    setEndDate("");
+                                }}
+                                className="rounded-2xl border border-blue-100 px-4 py-3 text-sm font-extrabold text-[#17325c] transition hover:border-[#1e4db7] hover:bg-[#eef6fb]"
+                            >
+                                Clear Filters
+                            </button>
                         </div>
                     </div>
 
@@ -906,7 +1030,8 @@ export default function SalesMonitoring() {
                     </InfoPanel>
                 </div>
             </div>
-        </DashboardLayout>
+            </DashboardLayout>
+        </>
     );
 }
 
@@ -1059,9 +1184,31 @@ function formatChartValue(value, name) {
     return [formattedValue, label];
 }
 
+function isSaleWithinDateRange(saleDateValue, startDate, endDate) {
+    if (!startDate && !endDate) return true;
+    if (!saleDateValue) return false;
+
+    const saleDate = new Date(saleDateValue);
+    if (Number.isNaN(saleDate.getTime())) return false;
+
+    if (startDate) {
+        const start = new Date(`${startDate}T00:00:00`);
+        if (saleDate < start) return false;
+    }
+
+    if (endDate) {
+        const end = new Date(`${endDate}T23:59:59.999`);
+        if (saleDate > end) return false;
+    }
+
+    return true;
+}
+
 function buildSalesMonitoringWorkbookBlob({
     generatedAt,
     branchFilter,
+    startDate,
+    endDate,
     search,
     salesMetric,
     selectedProduct,
@@ -1090,6 +1237,8 @@ function buildSalesMonitoringWorkbookBlob({
         [textCell("RetailPulse Sales Monitoring Report", "Title", 1)],
         [textCell("Generated At", "SummaryLabel"), textCell(generatedAt)],
         [textCell("Branch Filter", "SummaryLabel"), textCell(branchFilter === "ALL" ? "All Branches" : branchFilter)],
+        [textCell("Start Date", "SummaryLabel"), textCell(startDate || "-")],
+        [textCell("End Date", "SummaryLabel"), textCell(endDate || "-")],
         [textCell("Search Filter", "SummaryLabel"), textCell(search || "-")],
         [textCell("Chart Metric", "SummaryLabel"), textCell(salesMetric === "REVENUE" ? "Revenue" : "Units Sold")],
         [textCell("Product Trend Filter", "SummaryLabel"), textCell(selectedProduct === "ALL" ? "All Products" : selectedProduct)],
